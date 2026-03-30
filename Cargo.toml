@@ -1,0 +1,16 @@
+[workspace]
+members = ["programs/*"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+anchor-lang = "0.32.1"
+anchor-spl = "0.32.1"
+
+[profile.release]
+overflow-checks = true

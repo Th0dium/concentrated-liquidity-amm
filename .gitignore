@@ -1,0 +1,24 @@
+# Rust / Anchor build output
+target/
+
+# Anchor-generated files
+**/target/
+**/*.so
+**/*.rs.bk
+
+# Node / test output
+node_modules/
+dist/
+.anchor/
+
+# Solana / key material
+*.json
+!.vscode/*.json
+keypairs/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+AGENTS.md
