@@ -2,8 +2,8 @@
 
 **Project:** Solana Concentrated Liquidity AMM Smart Contract  
 **Owner:** Daniel (Th0dium)  
-**Status:** Stage 1 - Project Initialization  
-**Last Updated:** 2026-03-30  
+**Status:** Stage 3 - Core Instructions In Progress  
+**Last Updated:** 2026-04-02  
 
 ---
 
@@ -202,33 +202,40 @@ position.fees_b += share
 
 ## Development Progress
 
-### Stage 1: Scaffold (Current)
-- [ ] `anchor init concentrated_liquidity`
-- [ ] Verify `anchor build` works
-- [ ] Add dependencies: anchor-spl, spl-token
-- [ ] Create project file structure
+### Stage 1: Scaffold (Completed)
+- [x] `anchor init concentrated_liquidity` equivalent scaffold created manually
+- [x] Verify `anchor build` works
+- [x] Add dependencies: anchor-lang, anchor-spl
+- [x] Create project file structure
 
 **Checkpoint:** Daniel explains what `lib.rs` does and why we need each dependency
 
 ---
 
-### Stage 2: State & Accounts (Upcoming)
-- [ ] Define PoolState struct
-- [ ] Define Position struct
+### Stage 2: State & Accounts (Completed)
+- [x] Define PoolState struct
+- [x] Define Position struct
 - [ ] Define TickState or use BTreeMap
-- [ ] Add account validation macros
+- [x] Add account validation macros
 
 **Checkpoint:** Daniel explains why PoolState is a PDA and Position is a PDA
 
 ---
 
-### Stage 3: Instructions (Upcoming)
-- [ ] Implement initialize_pool
-- [ ] Implement create_position
+### Stage 3: Instructions (Current)
+- [x] Implement initialize_pool
+- [x] Implement create_position
 - [ ] Implement swap (hardest part)
 - [ ] Implement close_position
 
 **Checkpoint:** Daniel traces through one full swap and explains tick crossing
+
+### Current Implementation Snapshot
+- `initialize_pool` exists and creates the pool PDA plus token vault PDAs.
+- `create_position` exists and creates a per-owner position PDA, transfers both tokens into vaults, and increments pool liquidity.
+- `PoolState` currently tracks core pool metadata plus `next_position_id` for deterministic position PDA creation.
+- `Position` currently tracks ownership, range, liquidity amount, and accrued-fee placeholders.
+- Concentrated-liquidity math is still placeholder logic. `create_position` currently derives liquidity from `min(amount_a, amount_b)` until tick math is implemented.
 
 ---
 

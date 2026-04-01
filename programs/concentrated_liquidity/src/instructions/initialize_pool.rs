@@ -1,7 +1,10 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Mint, Token, TokenAccount};
 
-use crate::{errors::ConcentratedLiquidityError, state::{PoolState, DEFAULT_TICK_SPACING_BPS}};
+use crate::{
+    errors::ConcentratedLiquidityError,
+    state::{PoolState, DEFAULT_TICK_SPACING_BPS},
+};
 
 #[derive(Accounts)]
 #[instruction(fee_bps: u16, tick_spacing_bps: u16)]
@@ -46,7 +49,11 @@ pub struct InitializePool<'info> {
 }
 
 pub fn handler(ctx: Context<InitializePool>, fee_bps: u16, tick_spacing_bps: u16) -> Result<()> {
-    require_keys_neq!(ctx.accounts.token_a_mint.key(), ctx.accounts.token_b_mint.key(), ConcentratedLiquidityError::IdenticalMints);
+    require_keys_neq!(
+        ctx.accounts.token_a_mint.key(),
+        ctx.accounts.token_b_mint.key(),
+        ConcentratedLiquidityError::IdenticalMints
+    );
     require!(fee_bps <= 10_000, ConcentratedLiquidityError::InvalidFeeBps);
 
     let pool_state = &mut ctx.accounts.pool_state;
@@ -63,6 +70,7 @@ pub fn handler(ctx: Context<InitializePool>, fee_bps: u16, tick_spacing_bps: u16
     } else {
         tick_spacing_bps
     };
+    pool_state.next_position_id = 0;
 
     Ok(())
 }

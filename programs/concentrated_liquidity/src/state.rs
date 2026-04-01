@@ -14,12 +14,14 @@ pub struct PoolState {
     pub current_tick: i32,
     pub total_liquidity: u128,
     pub tick_spacing_bps: u16,
+    pub next_position_id: u64,
 }
 
 #[account]
 #[derive(InitSpace)]
 pub struct Position {
     pub bump: u8,
+    pub position_id: u64,
     pub owner: Pubkey,
     pub pool: Pubkey,
     pub tick_lower: i32,
