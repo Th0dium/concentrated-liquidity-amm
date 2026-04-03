@@ -10,6 +10,4 @@ pub enum ConcentratedLiquidityError {
     InvalidTickRange,
     #[msg("Deposit amounts must both be greater than zero.")]
     ZeroLiquidityDeposit,
-    #[msg("The requested position id does not match the next expected id for this pool.")]
-    InvalidPositionId,
 }

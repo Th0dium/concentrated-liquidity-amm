@@ -1,5 +1,8 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{transfer, Mint, Token, TokenAccount, Transfer};
+use anchor_spl::{
+    associated_token::AssociatedToken,
+    token::{mint_to, transfer, Mint, MintTo, Token, TokenAccount, Transfer},
+};
 
 use crate::{
     errors::ConcentratedLiquidityError,
@@ -7,7 +10,7 @@ use crate::{
 };
 
 #[derive(Accounts)]
-#[instruction(position_id: u64, tick_lower: i32, tick_upper: i32)]
+#[instruction(tick_lower: i32, tick_upper: i32)]
 pub struct CreatePosition<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
@@ -24,19 +27,35 @@ pub struct CreatePosition<'info> {
     pub token_a_mint: Account<'info, Mint>,
     pub token_b_mint: Account<'info, Mint>,
 
+    // PDA seeds: [b"position", position_mint.key().as_ref()]
     #[account(
         init,
         payer = owner,
         space = 8 + Position::INIT_SPACE,
         seeds = [
             b"position",
-            pool_state.key().as_ref(),
-            owner.key().as_ref(),
-            &position_id.to_le_bytes(),
+            position_mint.key().as_ref(),
         ],
         bump
     )]
     pub position: Account<'info, Position>,
+
+    #[account(
+        init,
+        payer = owner,
+        mint::decimals = 0,
+        mint::authority = pool_state,
+        mint::freeze_authority = pool_state,
+    )]
+    pub position_mint: Account<'info, Mint>,
+
+    #[account(
+        init,
+        payer = owner,
+        associated_token::mint = position_mint,
+        associated_token::authority = owner,
+    )]
+    pub owner_position_token_account: Account<'info, TokenAccount>,
 
     #[account(
         mut,
@@ -59,12 +78,13 @@ pub struct CreatePosition<'info> {
     pub token_b_vault: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
 }
 
 pub fn handler(
     ctx: Context<CreatePosition>,
-    position_id: u64,
     tick_lower: i32,
     tick_upper: i32,
     amount_a: u64,
@@ -72,10 +92,6 @@ pub fn handler(
 ) -> Result<()> {
     require!(tick_lower < tick_upper, ConcentratedLiquidityError::InvalidTickRange);
     require!(amount_a > 0 && amount_b > 0, ConcentratedLiquidityError::ZeroLiquidityDeposit);
-    require!(
-        position_id == ctx.accounts.pool_state.next_position_id,
-        ConcentratedLiquidityError::InvalidPositionId
-    );
 
     let cpi_accounts_a = Transfer {
         from: ctx.accounts.owner_token_a.to_account_info(),
@@ -97,13 +113,36 @@ pub fn handler(
         amount_b,
     )?;
 
+    let pool_state_key = ctx.accounts.pool_state.key();
+    let token_a_mint_key = ctx.accounts.token_a_mint.key();
+    let token_b_mint_key = ctx.accounts.token_b_mint.key();
+    let signer_seeds: &[&[u8]] = &[
+        b"pool",
+        token_a_mint_key.as_ref(),
+        token_b_mint_key.as_ref(),
+        &[ctx.accounts.pool_state.bump],
+    ];
+    let mint_to_accounts = MintTo {
+        mint: ctx.accounts.position_mint.to_account_info(),
+        to: ctx.accounts.owner_position_token_account.to_account_info(),
+        authority: ctx.accounts.pool_state.to_account_info(),
+    };
+    mint_to(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            mint_to_accounts,
+            &[signer_seeds],
+        ),
+        1,
+    )?;
+
     let liquidity_amount = u128::from(amount_a.min(amount_b));
 
     let position = &mut ctx.accounts.position;
     position.bump = ctx.bumps.position;
-    position.position_id = position_id;
+    position.position_mint = ctx.accounts.position_mint.key();
     position.owner = ctx.accounts.owner.key();
-    position.pool = ctx.accounts.pool_state.key();
+    position.pool = pool_state_key;
     position.tick_lower = tick_lower;
     position.tick_upper = tick_upper;
     position.liquidity_amount = liquidity_amount;
@@ -115,7 +154,6 @@ pub fn handler(
         .total_liquidity
         .checked_add(liquidity_amount)
         .unwrap();
-    pool_state.next_position_id = pool_state.next_position_id.checked_add(1).unwrap();
 
     Ok(())
 }

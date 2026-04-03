@@ -70,7 +70,6 @@ pub fn handler(ctx: Context<InitializePool>, fee_bps: u16, tick_spacing_bps: u16
     } else {
         tick_spacing_bps
     };
-    pool_state.next_position_id = 0;
 
     Ok(())
 }

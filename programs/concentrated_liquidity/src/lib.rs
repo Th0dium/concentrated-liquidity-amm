@@ -22,19 +22,11 @@ pub mod concentrated_liquidity {
 
     pub fn create_position(
         ctx: Context<CreatePosition>,
-        position_id: u64,
         tick_lower: i32,
         tick_upper: i32,
         amount_a: u64,
         amount_b: u64,
     ) -> Result<()> {
-        instructions::create_position::handler(
-            ctx,
-            position_id,
-            tick_lower,
-            tick_upper,
-            amount_a,
-            amount_b,
-        )
+        instructions::create_position::handler(ctx, tick_lower, tick_upper, amount_a, amount_b)
     }
 }
