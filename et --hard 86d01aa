@@ -1,0 +1,212 @@
+// Instruction: create_position
+// Creates a new liquidity position within a specified tick range.
+// Each position is represented by a unique NFT-like token (decimals=0, supply=1).
+
+use anchor_lang::prelude::*;
+use anchor_spl::{
+    associated_token::AssociatedToken,
+    token::{mint_to, transfer, Mint, MintTo, Token, TokenAccount, Transfer},
+};
+
+use crate::{
+/// Accounts required to create a new liquidity position.
+/// 
+/// Flow:
+/// 1. Create a new position mint (NFT-like token with decimals=0)
+/// 2. Create owner's position token account and mint 1 token to it
+/// 3. Transfer deposit amounts from owner to pool vaults
+    /// Pool state PDA that tracks aggregate liquidity and vault addresses.
+    /// Validates that the provided vaults and mints match what's stored in pool state.
+    #[account(
+        mut,
+        has_one = token_a_mint,
+        has_one = token_b_mint,
+        has_one = token_a_vault,
+        has_one = token_b_vault,
+    )]
+    pub pool_state: Account<'info, PoolState>,
+
+    /// Token A mint (e.g., USDC)
+    /// Position PDA that stores liquidity range, amounts, and fee tracking.
+    /// Seeds: [b"position", position_mint.key()]
+    /// Using position_mint as seed ensures uniqueness without user-provided IDs.
+    #[account(
+        init,
+        payer = owner,
+        space = 8 + Position::INIT_SPACE,
+        seeds = [
+            b"position",
+            position_mint.key().as_ref(),
+        ],
+        bump
+    )]
+    /// Unique SPL token mint for this position (NFT-like: decimals=0, supply=1).
+    /// Authority is pool_state PDA so program can mint via CPI with signer seeds.
+    /// This mint serves as both the unique identifier and enables position transferability.
+    #[account(
+        init,
+        payer = owner,
+        mint::decimals = 0,
+        mint::authority = pool_state,       // Pool PDA can mint (program signs)
+        mint::freeze_authority = pool_state,
+    /// Owner's token account that will hold the 1 position NFT.
+    /// Proves ownership of this position.
+    #[account(
+        init,
+        payer = owner,
+        associated_token::mint = position_mint,
+        associated_token::authority = owner,
+    )]
+    /// Owner's token A account (source of deposit)
+    #[account(
+        mut,
+        token::mint = token_a_mint,
+        token::authority = owner,
+    )]
+    pub owner_token_a: Account<'info, TokenAccount>,
+
+    /// Owner's token B account (source of deposit)
+    #[account(
+        mut,
+        token::mint = token_b_mint,
+        token::authority = owner,
+    )]
+    pub owner_token_b: Account<'info, TokenAccount>,
+
+    /// Pool's token A vault (destination of deposit)
+    #[account(mut)]
+    pub token_a_vault: Account<'info, TokenAccount>,
+
+    /// SPL Token Program (for CPI: transfer, mint_to)
+    pub token_program: Program<'info, Token>,
+    
+    /// Associated Token Program (for creating owner's position token account)
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    
+/// Handler for create_position instruction.
+pub fn handler(
+    // Step 1: Transfer token from owner to pool vaults
+    // CPI to SPL Token Program's transfer instruction
+    let cpi_accounts_a = Transfer {
+        from: ctx.accounts.owner_token_a.to_account_info(),
+        to: ctx.accounts.token_a_vault.to_account_info(),
+        authority: ctx.accounts.owner.to_account_info(),
+    };
+    transfer(
+        CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts_a),
+        amount_a,
+    )?;
+
+    let cpi_accounts_b = Transfer {
+        from: ctx.accounts.owner_token_b.to_account_info(),
+        to: ctx.accounts.token_b_vault.to_account_info(),
+        authority: ctx.accounts.owner.to_account_info(),
+    };
+    transfer(
+        CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts_b),
+    // Step 2: Mint 1 position NFT to owner
+    // Since position_mint authority is pool_state (a PDA), we need to sign with PDA seeds
+    let pool_state_key = ctx.accounts.pool_state.key();
+    let token_a_mint_key = ctx.accounts.token_a_mint.key();
+    let token_b_mint_key = ctx.accounts.token_b_mint.key();
+    
+    // PDA signer seeds for pool_state: [b"pool", token_a_mint, token_b_mint, bump]
+    let signer_seeds: &[&[u8]] = &[
+        b"pool",
+        token_a_mint_key.as_ref(),
+        token_b_mint_key.as_ref(),
+        &[ctx.accounts.pool_state.bump],
+    ];
+    
+    // CPI to SPL Token Program's mint_to instruction
+    // Program signs on behalf of pool_state PDA using signer_seeds
+    let mint_to_accounts = MintTo {
+        mint: ctx.accounts.position_mint.to_account_info(),
+        to: ctx.accounts.owner_position_token_account.to_account_info(),
+        authority: ctx.accounts.pool_state.to_account_info(),
+    };
+    mint_to(
+        CpiContext::new_with_signer(
+    // Step 3: Calculate liquidity amount
+    // TODO: Replace with proper concentrated liquidity math based on current tick
+    // For now: use min(amount_a, amount_b) as placeholder
+    let liquidity_amount = u128::from(amount_a.min(amount_b));
+
+    // Step 4: Initialize position PDA with range and liquidity data
+    let position = &mut ctx.accounts.position;
+    position.bump = ctx.bumps.position;
+    position.position_mint = ctx.accounts.position_mint.key();
+    position.owner = ctx.accounts.owner.key();
+    position.pool = pool_state_key;
+    position.tick_lower = tick_lower;
+    position.tick_upper = tick_upper;
+    position.liquidity_amount = liquidity_amount;
+    position.fees_a_owed = 0; // No fees yet
+    position.fees_b_owed = 0;
+
+    // Step 5: Update pool's total liquidity
+    let pool_state = &mut ctx.accounts.pool_state;
+    pool_state.total_liquidity = pool_state
+        .total_liquidity
+        .checked_add(liquidity_amount)
+        .unwrap(); // TODO: Handle overflow gracefully
+
+    Ok(())
+}       from: ctx.accounts.owner_token_b.to_account_info(),
+        to: ctx.accounts.token_b_vault.to_account_info(),
+        authority: ctx.accounts.owner.to_account_info(),
+    };
+
+    transfer(
+        CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts_a),
+        amount_a,
+    )?;
+    transfer(
+        CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts_b),
+        amount_b,
+    )?;
+
+    let pool_state_key = ctx.accounts.pool_state.key();
+    let token_a_mint_key = ctx.accounts.token_a_mint.key();
+    let token_b_mint_key = ctx.accounts.token_b_mint.key();
+    let signer_seeds: &[&[u8]] = &[
+        b"pool",
+        token_a_mint_key.as_ref(),
+        token_b_mint_key.as_ref(),
+        &[ctx.accounts.pool_state.bump],
+    ];
+    let mint_to_accounts = MintTo {
+        mint: ctx.accounts.position_mint.to_account_info(),
+        to: ctx.accounts.owner_position_token_account.to_account_info(),
+        authority: ctx.accounts.pool_state.to_account_info(),
+    };
+    mint_to(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            mint_to_accounts,
+            &[signer_seeds],
+        ),
+        1,
+    )?;
+
+    let liquidity_amount = u128::from(amount_a.min(amount_b));
+
+    let position = &mut ctx.accounts.position;
+    position.bump = ctx.bumps.position;
+    position.position_mint = ctx.accounts.position_mint.key();
+    position.owner = ctx.accounts.owner.key();
+    position.pool = pool_state_key;
+    position.tick_lower = tick_lower;
+    position.tick_upper = tick_upper;
+    position.liquidity_amount = liquidity_amount;
+    position.fees_a_owed = 0;
+    position.fees_b_owed = 0;
+
+    let pool_state = &mut ctx.accounts.pool_state;
+    pool_state.total_liquidity = pool_state
+        .total_liquidity
+        .checked_add(liquidity_amount)
+        .unwrap();
+
+    Ok(())
+}
