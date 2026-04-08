@@ -7,7 +7,6 @@ use crate::{
 };
 
 #[derive(Accounts)]
-#[instruction(fee_bps: u16, tick_spacing_bps: u16)]
 pub struct InitializePool<'info> {
     /// Payer for account creation rent
     #[account(mut)]

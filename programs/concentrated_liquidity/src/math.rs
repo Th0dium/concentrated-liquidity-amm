@@ -2,20 +2,20 @@ use crate::state::TICK_ARRAY_SIZE;
 
 pub fn tick_array_span(tick_spacing_bps: u16) -> Result<i32, crate::errors::ConcentratedLiquidityError> {
     let spacing = i32::from(tick_spacing_bps);
-    let width = spacing
+    let array_span = spacing
         .checked_mul(TICK_ARRAY_SIZE as i32)
         .ok_or(crate::errors::ConcentratedLiquidityError::TickMathOverflow)?;
-    Ok(width)
+    Ok(array_span)
 }
 
 pub fn tick_array_start_index(
     tick_index: i32,
     tick_spacing_bps: u16,
 ) -> Result<i32, crate::errors::ConcentratedLiquidityError> {
-    let span = tick_array_span(tick_spacing_bps)?;
-    let quotient = tick_index.div_euclid(span);
+    let array_span = tick_array_span(tick_spacing_bps)?;
+    let quotient = tick_index.div_euclid(array_span);
     quotient
-        .checked_mul(span)
+        .checked_mul(array_span)
         .ok_or(crate::errors::ConcentratedLiquidityError::TickMathOverflow)
 }
 

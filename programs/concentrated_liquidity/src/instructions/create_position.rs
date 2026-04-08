@@ -13,7 +13,6 @@ use crate::{
 };
 
 #[derive(Accounts)]
-#[instruction(tick_lower: i32, tick_upper: i32)]
 pub struct CreatePosition<'info> {
     /// LP (liquidity provider) creating the position and paying for accounts
     #[account(mut)]
