@@ -7,7 +7,8 @@ use anchor_spl::{
 use crate::{
     errors::ConcentratedLiquidityError,
     math::{
-        liquidity_from_amounts, tick_array_start_index, tick_offset_in_array, validate_tick_alignment,
+        liquidity_from_amounts, sqrt_price_x64_to_tick, tick_array_start_index,
+        tick_offset_in_array, validate_position_token_amounts, validate_tick_alignment,
     },
     state::{PoolState, Position, TickArray},
 };
@@ -122,9 +123,9 @@ pub fn handler(
 ) -> Result<()> {
     // Validate tick range (lower must be strictly less than upper)
     require!(tick_lower < tick_upper, ConcentratedLiquidityError::InvalidTickRange);
-    
-    // Validate both amounts are non-zero
-    require!(amount_a > 0 && amount_b > 0, ConcentratedLiquidityError::ZeroLiquidityDeposit);
+
+    let current_tick = sqrt_price_x64_to_tick(ctx.accounts.pool_state.sqrt_price_x64);
+    validate_position_token_amounts(current_tick, tick_lower, tick_upper, amount_a, amount_b)?;
     validate_tick_alignment(tick_lower, ctx.accounts.pool_state.tick_spacing_bps)
         .map_err(|_| ConcentratedLiquidityError::TickNotAligned)?;
     validate_tick_alignment(tick_upper, ctx.accounts.pool_state.tick_spacing_bps)
@@ -152,26 +153,30 @@ pub fn handler(
 
     // Transfer token A from owner to pool vault
     // CPI to SPL Token Program: transfer(from, to, authority, amount)
-    let cpi_accounts_a = Transfer {
-        from: ctx.accounts.owner_token_a.to_account_info(),
-        to: ctx.accounts.token_a_vault.to_account_info(),
-        authority: ctx.accounts.owner.to_account_info(),
-    };
-    transfer(
-        CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts_a),
-        amount_a,
-    )?;
+    if amount_a > 0 {
+        let cpi_accounts_a = Transfer {
+            from: ctx.accounts.owner_token_a.to_account_info(),
+            to: ctx.accounts.token_a_vault.to_account_info(),
+            authority: ctx.accounts.owner.to_account_info(),
+        };
+        transfer(
+            CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts_a),
+            amount_a,
+        )?;
+    }
 
     // Transfer token B from owner to pool vault
-    let cpi_accounts_b = Transfer {
-        from: ctx.accounts.owner_token_b.to_account_info(),
-        to: ctx.accounts.token_b_vault.to_account_info(),
-        authority: ctx.accounts.owner.to_account_info(),
-    };
-    transfer(
-        CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts_b),
-        amount_b,
-    )?;
+    if amount_b > 0 {
+        let cpi_accounts_b = Transfer {
+            from: ctx.accounts.owner_token_b.to_account_info(),
+            to: ctx.accounts.token_b_vault.to_account_info(),
+            authority: ctx.accounts.owner.to_account_info(),
+        };
+        transfer(
+            CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts_b),
+            amount_b,
+        )?;
+    }
 
     // Mint 1 position NFT to owner
     // CPI to SPL Token Program with PDA signer (pool_state signs on behalf of program)
@@ -267,7 +272,6 @@ pub fn handler(
 
     // Update active pool liquidity only if current price is in this range.
     let pool_state = &mut ctx.accounts.pool_state;
-    let current_tick = crate::math::sqrt_price_x64_to_tick(pool_state.sqrt_price_x64);
     if tick_lower <= current_tick && current_tick < tick_upper {
         pool_state.liquidity = pool_state
             .liquidity

@@ -52,6 +52,32 @@ pub fn validate_tick_alignment(
     Ok(())
 }
 
+pub fn validate_position_token_amounts(
+    current_tick: i32,
+    tick_lower: i32,
+    tick_upper: i32,
+    amount_a: u64,
+    amount_b: u64,
+) -> Result<(), crate::errors::ConcentratedLiquidityError> {
+    if amount_a == 0 && amount_b == 0 {
+        return Err(crate::errors::ConcentratedLiquidityError::ZeroLiquidityDeposit);
+    }
+
+    if current_tick < tick_lower {
+        if amount_a == 0 || amount_b != 0 {
+            return Err(crate::errors::ConcentratedLiquidityError::InvalidPositionTokenAmounts);
+        }
+    } else if current_tick >= tick_upper {
+        if amount_b == 0 || amount_a != 0 {
+            return Err(crate::errors::ConcentratedLiquidityError::InvalidPositionTokenAmounts);
+        }
+    } else if amount_a == 0 || amount_b == 0 {
+        return Err(crate::errors::ConcentratedLiquidityError::InvalidPositionTokenAmounts);
+    }
+
+    Ok(())
+}
+
 pub fn sqrt_price_x64_to_tick(_sqrt_price_x64: u128) -> i32 {
     // Placeholder conversion for MVP. Full logarithmic conversion comes with swap math.
     0
@@ -65,10 +91,18 @@ pub fn tick_to_sqrt_price_x64(_tick: i32) -> u128 {
 pub fn liquidity_from_amounts(
     amount_a: u64,
     amount_b: u64,
-    _tick_lower: i32,
-    _tick_upper: i32,
-    _sqrt_price_x64: u128,
+    tick_lower: i32,
+    tick_upper: i32,
+    sqrt_price_x64: u128,
 ) -> u128 {
     // Placeholder until full concentrated-liquidity math is added.
-    u128::from(amount_a.min(amount_b))
+    // The branch structure still matches CLMM token-side semantics.
+    let current_tick = sqrt_price_x64_to_tick(sqrt_price_x64);
+    if current_tick < tick_lower {
+        u128::from(amount_a)
+    } else if current_tick >= tick_upper {
+        u128::from(amount_b)
+    } else {
+        u128::from(amount_a.min(amount_b))
+    }
 }

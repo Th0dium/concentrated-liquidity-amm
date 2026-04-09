@@ -8,8 +8,10 @@ pub enum ConcentratedLiquidityError {
     InvalidFeeBps,
     #[msg("Tick lower must be strictly less than tick upper.")]
     InvalidTickRange,
-    #[msg("Deposit amounts must both be greater than zero.")]
+    #[msg("At least one deposit amount must be greater than zero.")]
     ZeroLiquidityDeposit,
+    #[msg("Deposit token amounts do not match the current price relative to the position range.")]
+    InvalidPositionTokenAmounts,
     #[msg("Tick index must align to pool tick spacing.")]
     TickNotAligned,
     #[msg("Tick array start index is invalid for this pool spacing.")]
