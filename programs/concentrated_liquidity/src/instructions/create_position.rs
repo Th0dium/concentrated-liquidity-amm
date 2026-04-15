@@ -7,19 +7,17 @@ use anchor_spl::{
 use crate::{
     errors::ConcentratedLiquidityError,
     math::{
-        liquidity_from_amounts, sqrt_price_x64_to_tick, tick_array_start_index,
-        tick_offset_in_array, validate_position_token_amounts, validate_tick_alignment,
+        fee_growth_inside_for_ticks, initialize_tick_fee_growths, liquidity_quote, tick_array_start_index,
+        tick_offset_in_array, update_tick_liquidity, validate_position_token_amounts, validate_tick_alignment,
     },
     state::{PoolState, Position, TickArray},
 };
 
 #[derive(Accounts)]
 pub struct CreatePosition<'info> {
-    /// LP (liquidity provider) creating the position and paying for accounts
     #[account(mut)]
     pub owner: Signer<'info>,
 
-    /// Pool state (must match token mints and vaults)
     #[account(
         mut,
         has_one = token_a_mint,
@@ -29,28 +27,18 @@ pub struct CreatePosition<'info> {
     )]
     pub pool_state: Account<'info, PoolState>,
 
-    /// Token mint (read-only, used for validation)
     pub token_a_mint: Account<'info, Mint>,
     pub token_b_mint: Account<'info, Mint>,
 
-    /// Position PDA storing LP's liquidity metadata
-    /// Seeds: [b"position", position_mint]
-    /// Unique per position_mint, enables NFT-like transferability
     #[account(
         init,
         payer = owner,
         space = 8 + Position::INIT_SPACE,
-        seeds = [
-            b"position",
-            position_mint.key().as_ref(),
-        ],
+        seeds = [b"position", position_mint.key().as_ref()],
         bump
     )]
     pub position: Account<'info, Position>,
 
-    /// Unique mint for this position (NFT-like: decimals=0, supply=1)
-    /// Authority: pool_state PDA (only program can mint)
-    /// Serves as both unique identifier and transferable ownership token
     #[account(
         init,
         payer = owner,
@@ -60,8 +48,6 @@ pub struct CreatePosition<'info> {
     )]
     pub position_mint: Account<'info, Mint>,
 
-    /// Owner's token account to receive the position NFT
-    /// Will hold exactly 1 token after minting
     #[account(
         init,
         payer = owner,
@@ -70,7 +56,6 @@ pub struct CreatePosition<'info> {
     )]
     pub owner_position_token_account: Account<'info, TokenAccount>,
 
-    /// Owner's token A account (will decrease by amount_a)
     #[account(
         mut,
         token::mint = token_a_mint,
@@ -78,7 +63,6 @@ pub struct CreatePosition<'info> {
     )]
     pub owner_token_a: Account<'info, TokenAccount>,
 
-    /// Owner's token B account (will decrease by amount_b)
     #[account(
         mut,
         token::mint = token_b_mint,
@@ -86,11 +70,9 @@ pub struct CreatePosition<'info> {
     )]
     pub owner_token_b: Account<'info, TokenAccount>,
 
-    /// Pool's token A vault (will increase by amount_a)
     #[account(mut)]
     pub token_a_vault: Account<'info, TokenAccount>,
 
-    /// Pool's token B vault (will increase by amount_b)
     #[account(mut)]
     pub token_b_vault: Account<'info, TokenAccount>,
 
@@ -118,23 +100,22 @@ pub fn handler(
     ctx: Context<CreatePosition>,
     tick_lower: i32,
     tick_upper: i32,
-    amount_a: u64,
-    amount_b: u64,
+    amount_a_max: u64,
+    amount_b_max: u64,
 ) -> Result<()> {
-    // Validate tick range (lower must be strictly less than upper)
     require!(tick_lower < tick_upper, ConcentratedLiquidityError::InvalidTickRange);
 
-    let current_tick = sqrt_price_x64_to_tick(ctx.accounts.pool_state.sqrt_price_x64);
-    validate_position_token_amounts(current_tick, tick_lower, tick_upper, amount_a, amount_b)?;
-    validate_tick_alignment(tick_lower, ctx.accounts.pool_state.tick_spacing)
-        .map_err(|_| ConcentratedLiquidityError::TickNotAligned)?;
-    validate_tick_alignment(tick_upper, ctx.accounts.pool_state.tick_spacing)
-        .map_err(|_| ConcentratedLiquidityError::TickNotAligned)?;
+    let current_tick = ctx.accounts.pool_state.current_tick;
+    let tick_spacing = ctx.accounts.pool_state.tick_spacing;
+    let sqrt_price_x64 = ctx.accounts.pool_state.sqrt_price_x64;
+    let fee_growth_global_a_x64 = ctx.accounts.pool_state.fee_growth_global_a_x64;
+    let fee_growth_global_b_x64 = ctx.accounts.pool_state.fee_growth_global_b_x64;
+    validate_position_token_amounts(current_tick, tick_lower, tick_upper, amount_a_max, amount_b_max)?;
+    validate_tick_alignment(tick_lower, tick_spacing)?;
+    validate_tick_alignment(tick_upper, tick_spacing)?;
 
-    let lower_start = tick_array_start_index(tick_lower, ctx.accounts.pool_state.tick_spacing)
-        .map_err(|_| ConcentratedLiquidityError::InvalidTickArrayStart)?;
-    let upper_start = tick_array_start_index(tick_upper, ctx.accounts.pool_state.tick_spacing)
-        .map_err(|_| ConcentratedLiquidityError::InvalidTickArrayStart)?;
+    let lower_start = tick_array_start_index(tick_lower, tick_spacing)?;
+    let upper_start = tick_array_start_index(tick_upper, tick_spacing)?;
 
     {
         let tick_array_lower = ctx.accounts.tick_array_lower.load()?;
@@ -151,9 +132,56 @@ pub fn handler(
         );
     }
 
-    // Transfer token A from owner to pool vault
-    // CPI to SPL Token Program: transfer(from, to, authority, amount)
-    if amount_a > 0 {
+    let quote = liquidity_quote(
+        amount_a_max,
+        amount_b_max,
+        tick_lower,
+        tick_upper,
+        sqrt_price_x64,
+    )?;
+    let signed_liquidity = i128::try_from(quote.liquidity_delta)
+        .map_err(|_| ConcentratedLiquidityError::TickMathOverflow)?;
+
+    let fee_growth_inside = {
+        let lower_tick_snapshot = {
+            let tick_array_lower = ctx.accounts.tick_array_lower.load()?;
+            let lower_offset =
+                tick_offset_in_array(tick_array_lower.start_tick_index, tick_lower, tick_spacing)?;
+            let mut tick = tick_array_lower.ticks[lower_offset];
+            initialize_tick_fee_growths(
+                &mut tick,
+                tick_lower,
+                current_tick,
+                fee_growth_global_a_x64,
+                fee_growth_global_b_x64,
+            );
+            tick
+        };
+        let upper_tick_snapshot = {
+            let tick_array_upper = ctx.accounts.tick_array_upper.load()?;
+            let upper_offset =
+                tick_offset_in_array(tick_array_upper.start_tick_index, tick_upper, tick_spacing)?;
+            let mut tick = tick_array_upper.ticks[upper_offset];
+            initialize_tick_fee_growths(
+                &mut tick,
+                tick_upper,
+                current_tick,
+                fee_growth_global_a_x64,
+                fee_growth_global_b_x64,
+            );
+            tick
+        };
+
+        fee_growth_inside_for_ticks(
+            &ctx.accounts.pool_state,
+            tick_lower,
+            &lower_tick_snapshot,
+            tick_upper,
+            &upper_tick_snapshot,
+        )
+    };
+
+    if quote.amount_a > 0 {
         let cpi_accounts_a = Transfer {
             from: ctx.accounts.owner_token_a.to_account_info(),
             to: ctx.accounts.token_a_vault.to_account_info(),
@@ -161,12 +189,11 @@ pub fn handler(
         };
         transfer(
             CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts_a),
-            amount_a,
+            quote.amount_a,
         )?;
     }
 
-    // Transfer token B from owner to pool vault
-    if amount_b > 0 {
+    if quote.amount_b > 0 {
         let cpi_accounts_b = Transfer {
             from: ctx.accounts.owner_token_b.to_account_info(),
             to: ctx.accounts.token_b_vault.to_account_info(),
@@ -174,13 +201,10 @@ pub fn handler(
         };
         transfer(
             CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts_b),
-            amount_b,
+            quote.amount_b,
         )?;
     }
 
-    // Mint 1 position NFT to owner
-    // CPI to SPL Token Program with PDA signer (pool_state signs on behalf of program)
-    // Seeds: [b"pool", token_a_mint, token_b_mint, bump]
     let pool_state_key = ctx.accounts.pool_state.key();
     let token_a_mint_key = ctx.accounts.token_a_mint.key();
     let token_b_mint_key = ctx.accounts.token_b_mint.key();
@@ -201,21 +225,9 @@ pub fn handler(
             mint_to_accounts,
             &[signer_seeds],
         ),
-        1, // Mint exactly 1 NFT-like token
+        1,
     )?;
 
-    // Placeholder math interface for future concentrated-liquidity formulas.
-    let liquidity_amount = liquidity_from_amounts(
-        amount_a,
-        amount_b,
-        tick_lower,
-        tick_upper,
-        ctx.accounts.pool_state.sqrt_price_x64,
-    );
-    let signed_liquidity =
-        i128::try_from(liquidity_amount).map_err(|_| ConcentratedLiquidityError::TickMathOverflow)?;
-
-    // Initialize position state
     let position = &mut ctx.accounts.position;
     position.bump = ctx.bumps.position;
     position.position_mint = ctx.accounts.position_mint.key();
@@ -223,59 +235,47 @@ pub fn handler(
     position.pool = pool_state_key;
     position.tick_lower = tick_lower;
     position.tick_upper = tick_upper;
-    position.liquidity_amount = liquidity_amount;
+    position.liquidity_amount = quote.liquidity_delta;
+    position.fee_growth_checkpoint_a_x64 = fee_growth_inside.token_a_x64;
+    position.fee_growth_checkpoint_b_x64 = fee_growth_inside.token_b_x64;
     position.fees_a_owed = 0;
     position.fees_b_owed = 0;
 
-    // Tick boundary updates: lower adds liquidity, upper removes liquidity.
     {
         let mut tick_array_lower = ctx.accounts.tick_array_lower.load_mut()?;
-        let lower_offset = tick_offset_in_array(
-            tick_array_lower.start_tick_index,
-            tick_lower,
-            ctx.accounts.pool_state.tick_spacing,
-        )
-        .map_err(|_| ConcentratedLiquidityError::TickIndexOutOfBounds)?;
-
+        let lower_offset =
+            tick_offset_in_array(tick_array_lower.start_tick_index, tick_lower, tick_spacing)?;
         let lower_tick = &mut tick_array_lower.ticks[lower_offset];
-        lower_tick.initialized = 1;
-        lower_tick.liquidity_gross = lower_tick
-            .liquidity_gross
-            .checked_add(liquidity_amount)
-            .ok_or(ConcentratedLiquidityError::TickMathOverflow)?;
-        lower_tick.liquidity_net = lower_tick
-            .liquidity_net
-            .checked_add(signed_liquidity)
-            .ok_or(ConcentratedLiquidityError::TickMathOverflow)?;
+        initialize_tick_fee_growths(
+            lower_tick,
+            tick_lower,
+            current_tick,
+            fee_growth_global_a_x64,
+            fee_growth_global_b_x64,
+        );
+        update_tick_liquidity(lower_tick, signed_liquidity, false)?;
     }
 
     {
         let mut tick_array_upper = ctx.accounts.tick_array_upper.load_mut()?;
-        let upper_offset = tick_offset_in_array(
-            tick_array_upper.start_tick_index,
-            tick_upper,
-            ctx.accounts.pool_state.tick_spacing,
-        )
-        .map_err(|_| ConcentratedLiquidityError::TickIndexOutOfBounds)?;
-
+        let upper_offset =
+            tick_offset_in_array(tick_array_upper.start_tick_index, tick_upper, tick_spacing)?;
         let upper_tick = &mut tick_array_upper.ticks[upper_offset];
-        upper_tick.initialized = 1;
-        upper_tick.liquidity_gross = upper_tick
-            .liquidity_gross
-            .checked_add(liquidity_amount)
-            .ok_or(ConcentratedLiquidityError::TickMathOverflow)?;
-        upper_tick.liquidity_net = upper_tick
-            .liquidity_net
-            .checked_sub(signed_liquidity)
-            .ok_or(ConcentratedLiquidityError::TickMathOverflow)?;
+        initialize_tick_fee_growths(
+            upper_tick,
+            tick_upper,
+            current_tick,
+            fee_growth_global_a_x64,
+            fee_growth_global_b_x64,
+        );
+        update_tick_liquidity(upper_tick, signed_liquidity, true)?;
     }
 
-    // Update active pool liquidity only if current price is in this range.
-    let pool_state = &mut ctx.accounts.pool_state;
     if tick_lower <= current_tick && current_tick < tick_upper {
+        let pool_state = &mut ctx.accounts.pool_state;
         pool_state.liquidity = pool_state
             .liquidity
-            .checked_add(liquidity_amount)
+            .checked_add(quote.liquidity_delta)
             .ok_or(ConcentratedLiquidityError::TickMathOverflow)?;
     }
 

@@ -57,4 +57,19 @@ pub mod concentrated_liquidity {
     ) -> Result<()> {
         instructions::initialize_tick_array::handler(ctx, start_tick_index)
     }
+
+    /// Swap an exact input amount through the active liquidity ranges.
+    pub fn swap(
+        ctx: Context<Swap>,
+        amount_in: u64,
+        minimum_amount_out: u64,
+        a_to_b: bool,
+    ) -> Result<()> {
+        instructions::swap::handler(ctx, amount_in, minimum_amount_out, a_to_b)
+    }
+
+    /// Close a position, withdraw its liquidity, and claim any accrued fees.
+    pub fn close_position(ctx: Context<ClosePosition>) -> Result<()> {
+        instructions::close_position::handler(ctx)
+    }
 }

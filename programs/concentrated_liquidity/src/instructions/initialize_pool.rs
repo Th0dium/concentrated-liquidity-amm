@@ -82,7 +82,10 @@ pub fn handler(ctx: Context<InitializePool>, fee_bps: u16, tick_spacing: u16) ->
     
     // Start at price 1.0 encoded as Q64.64.
     pool_state.sqrt_price_x64 = Q64_64_ONE;
+    pool_state.current_tick = 0;
     pool_state.liquidity = 0;
+    pool_state.fee_growth_global_a_x64 = 0;
+    pool_state.fee_growth_global_b_x64 = 0;
     
     // Use default tick spacing if not provided
     pool_state.tick_spacing = if tick_spacing == 0 {

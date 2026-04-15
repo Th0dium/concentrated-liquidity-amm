@@ -5,15 +5,18 @@ use bytemuck::{Pod, Zeroable};
 pub const DEFAULT_TICK_SPACING: u16 = 100;
 pub const TICK_ARRAY_SIZE: usize = 88;
 pub const Q64_64_ONE: u128 = 1u128 << 64;
+pub const FEE_GROWTH_SCALING_FACTOR: u128 = Q64_64_ONE;
 
 #[zero_copy]
-#[derive(Default)]
+#[derive(Default, Copy, Clone)]
 #[repr(C)]
 pub struct Tick {
     pub initialized: u8,
-    pub _padding: [u8; 15],
+    pub _padding: [u8; 7],
     pub liquidity_net: i128,
     pub liquidity_gross: u128,
+    pub fee_growth_outside_a_x64: u128,
+    pub fee_growth_outside_b_x64: u128,
 }
 
 /// Pool state account storing metadata and aggregate liquidity for a token pair.
@@ -37,13 +40,20 @@ pub struct PoolState {
     pub fee_bps: u16,
     /// Current sqrt price in Q64.64 fixed-point format
     pub sqrt_price_x64: u128,
+    /// Current active tick derived from sqrt_price_x64 and updated during swaps
+    pub current_tick: i32,
     /// Active liquidity at the current pool price
     pub liquidity: u128,
+    /// Global fee growth for token A in Q64.64 fee-per-unit-liquidity form
+    pub fee_growth_global_a_x64: u128,
+    /// Global fee growth for token B in Q64.64 fee-per-unit-liquidity form
+    pub fee_growth_global_b_x64: u128,
     /// Minimum spacing between valid ticks, in raw tick units (e.g., 100 ticks ~= 1%)
     pub tick_spacing: u16,
 }
 
 #[account(zero_copy)]
+#[derive(Copy, Clone)]
 #[repr(C)]
 pub struct TickArray {
     pub pool: Pubkey,
@@ -64,7 +74,7 @@ pub struct Position {
     pub bump: u8,
     /// Unique mint address for this position (NFT-like, decimals=0, supply=1)
     pub position_mint: Pubkey,
-    /// Current owner of the position (can change if position token is transferred)
+    /// Owner recorded when the position was created; NFT token ownership is the authoritative source
     pub owner: Pubkey,
     /// Pool this position belongs to
     pub pool: Pubkey,
@@ -74,6 +84,10 @@ pub struct Position {
     pub tick_upper: i32,
     /// Amount of liquidity provided (calculated from deposited tokens)
     pub liquidity_amount: u128,
+    /// Last fee growth-inside checkpoint for token A
+    pub fee_growth_checkpoint_a_x64: u128,
+    /// Last fee growth-inside checkpoint for token B
+    pub fee_growth_checkpoint_b_x64: u128,
     /// Accumulated fees in token A (claimable by owner)
     pub fees_a_owed: u128,
     /// Accumulated fees in token B (claimable by owner)
