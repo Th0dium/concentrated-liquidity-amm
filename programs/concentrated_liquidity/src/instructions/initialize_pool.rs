@@ -3,7 +3,7 @@ use anchor_spl::token::{Mint, Token, TokenAccount};
 
 use crate::{
     errors::ConcentratedLiquidityError,
-    state::{PoolState, DEFAULT_TICK_SPACING_BPS, Q64_64_ONE},
+    state::{PoolState, DEFAULT_TICK_SPACING, Q64_64_ONE},
 };
 
 #[derive(Accounts)]
@@ -60,7 +60,7 @@ pub struct InitializePool<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(ctx: Context<InitializePool>, fee_bps: u16, tick_spacing_bps: u16) -> Result<()> {
+pub fn handler(ctx: Context<InitializePool>, fee_bps: u16, tick_spacing: u16) -> Result<()> {
     // Validate token mints are different (can't create USDC/USDC pool)
     require_keys_neq!(
         ctx.accounts.token_a_mint.key(),
@@ -85,10 +85,10 @@ pub fn handler(ctx: Context<InitializePool>, fee_bps: u16, tick_spacing_bps: u16
     pool_state.liquidity = 0;
     
     // Use default tick spacing if not provided
-    pool_state.tick_spacing_bps = if tick_spacing_bps == 0 {
-        DEFAULT_TICK_SPACING_BPS
+    pool_state.tick_spacing = if tick_spacing == 0 {
+        DEFAULT_TICK_SPACING
     } else {
-        tick_spacing_bps
+        tick_spacing
     };
 
     Ok(())

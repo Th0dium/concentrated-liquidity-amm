@@ -1,8 +1,8 @@
 use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};
 
-/// Default tick spacing: 100 basis points = 1% price movement per tick
-pub const DEFAULT_TICK_SPACING_BPS: u16 = 100;
+/// Default tick spacing: 100 ticks, roughly 1% price distance between initialized ticks.
+pub const DEFAULT_TICK_SPACING: u16 = 100;
 pub const TICK_ARRAY_SIZE: usize = 88;
 pub const Q64_64_ONE: u128 = 1u128 << 64;
 
@@ -39,8 +39,8 @@ pub struct PoolState {
     pub sqrt_price_x64: u128,
     /// Active liquidity at the current pool price
     pub liquidity: u128,
-    /// Minimum tick spacing in basis points (e.g., 100 = 1%)
-    pub tick_spacing_bps: u16,
+    /// Minimum spacing between valid ticks, in raw tick units (e.g., 100 ticks ~= 1%)
+    pub tick_spacing: u16,
 }
 
 #[account(zero_copy)]

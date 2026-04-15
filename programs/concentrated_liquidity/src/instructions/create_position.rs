@@ -126,14 +126,14 @@ pub fn handler(
 
     let current_tick = sqrt_price_x64_to_tick(ctx.accounts.pool_state.sqrt_price_x64);
     validate_position_token_amounts(current_tick, tick_lower, tick_upper, amount_a, amount_b)?;
-    validate_tick_alignment(tick_lower, ctx.accounts.pool_state.tick_spacing_bps)
+    validate_tick_alignment(tick_lower, ctx.accounts.pool_state.tick_spacing)
         .map_err(|_| ConcentratedLiquidityError::TickNotAligned)?;
-    validate_tick_alignment(tick_upper, ctx.accounts.pool_state.tick_spacing_bps)
+    validate_tick_alignment(tick_upper, ctx.accounts.pool_state.tick_spacing)
         .map_err(|_| ConcentratedLiquidityError::TickNotAligned)?;
 
-    let lower_start = tick_array_start_index(tick_lower, ctx.accounts.pool_state.tick_spacing_bps)
+    let lower_start = tick_array_start_index(tick_lower, ctx.accounts.pool_state.tick_spacing)
         .map_err(|_| ConcentratedLiquidityError::InvalidTickArrayStart)?;
-    let upper_start = tick_array_start_index(tick_upper, ctx.accounts.pool_state.tick_spacing_bps)
+    let upper_start = tick_array_start_index(tick_upper, ctx.accounts.pool_state.tick_spacing)
         .map_err(|_| ConcentratedLiquidityError::InvalidTickArrayStart)?;
 
     {
@@ -233,7 +233,7 @@ pub fn handler(
         let lower_offset = tick_offset_in_array(
             tick_array_lower.start_tick_index,
             tick_lower,
-            ctx.accounts.pool_state.tick_spacing_bps,
+            ctx.accounts.pool_state.tick_spacing,
         )
         .map_err(|_| ConcentratedLiquidityError::TickIndexOutOfBounds)?;
 
@@ -254,7 +254,7 @@ pub fn handler(
         let upper_offset = tick_offset_in_array(
             tick_array_upper.start_tick_index,
             tick_upper,
-            ctx.accounts.pool_state.tick_spacing_bps,
+            ctx.accounts.pool_state.tick_spacing,
         )
         .map_err(|_| ConcentratedLiquidityError::TickIndexOutOfBounds)?;
 

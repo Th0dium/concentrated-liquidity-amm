@@ -1,30 +1,33 @@
 use crate::state::TICK_ARRAY_SIZE;
 
-pub fn tick_array_span(tick_spacing_bps: u16) -> Result<i32, crate::errors::ConcentratedLiquidityError> {
-    let spacing = i32::from(tick_spacing_bps);
+/// Calculates the total tick range covered by one tick array (TICK_ARRAY_SIZE * tick_spacing).
+pub fn tick_array_span(tick_spacing: u16) -> Result<i32, crate::errors::ConcentratedLiquidityError> {
+    let spacing = i32::from(tick_spacing);
     let array_span = spacing
         .checked_mul(TICK_ARRAY_SIZE as i32)
         .ok_or(crate::errors::ConcentratedLiquidityError::TickMathOverflow)?;
     Ok(array_span)
 }
 
+/// Returns the start tick index of the tick array that contains the given tick.
 pub fn tick_array_start_index(
     tick_index: i32,
-    tick_spacing_bps: u16,
+    tick_spacing: u16,
 ) -> Result<i32, crate::errors::ConcentratedLiquidityError> {
-    let array_span = tick_array_span(tick_spacing_bps)?;
+    let array_span = tick_array_span(tick_spacing)?;
     let quotient = tick_index.div_euclid(array_span);
     quotient
         .checked_mul(array_span)
         .ok_or(crate::errors::ConcentratedLiquidityError::TickMathOverflow)
 }
 
+/// Finds the array index offset of a tick within its tick array.
 pub fn tick_offset_in_array(
     start_tick_index: i32,
     tick_index: i32,
-    tick_spacing_bps: u16,
+    tick_spacing: u16,
 ) -> Result<usize, crate::errors::ConcentratedLiquidityError> {
-    let spacing = i32::from(tick_spacing_bps);
+    let spacing = i32::from(tick_spacing);
     let delta = tick_index
         .checked_sub(start_tick_index)
         .ok_or(crate::errors::ConcentratedLiquidityError::TickMathOverflow)?;
@@ -41,17 +44,19 @@ pub fn tick_offset_in_array(
     Ok(offset as usize)
 }
 
+/// Validates that a tick index is aligned with the pool's tick spacing.
 pub fn validate_tick_alignment(
     tick_index: i32,
-    tick_spacing_bps: u16,
+    tick_spacing: u16,
 ) -> Result<(), crate::errors::ConcentratedLiquidityError> {
-    let spacing = i32::from(tick_spacing_bps);
+    let spacing = i32::from(tick_spacing);
     if tick_index % spacing != 0 {
         return Err(crate::errors::ConcentratedLiquidityError::TickNotAligned);
     }
     Ok(())
 }
 
+/// Validates token deposit amounts match position range relative to current price (below/in/above range).
 pub fn validate_position_token_amounts(
     current_tick: i32,
     tick_lower: i32,
@@ -63,12 +68,12 @@ pub fn validate_position_token_amounts(
         return Err(crate::errors::ConcentratedLiquidityError::ZeroLiquidityDeposit);
     }
 
-    if current_tick < tick_lower {
-        if amount_a == 0 || amount_b != 0 {
+    if tick_lower > current_tick {
+        if amount_a == 0 || amount_b > 0 {
             return Err(crate::errors::ConcentratedLiquidityError::InvalidPositionTokenAmounts);
         }
-    } else if current_tick >= tick_upper {
-        if amount_b == 0 || amount_a != 0 {
+    } else if tick_upper <= current_tick  {
+        if amount_a > 0 || amount_b == 0 {
             return Err(crate::errors::ConcentratedLiquidityError::InvalidPositionTokenAmounts);
         }
     } else if amount_a == 0 || amount_b == 0 {
@@ -78,6 +83,7 @@ pub fn validate_position_token_amounts(
     Ok(())
 }
 
+/// Converts Q64.64 sqrt price to tick index (placeholder returns 0 until swap math is implemented).
 pub fn sqrt_price_x64_to_tick(_sqrt_price_x64: u128) -> i32 {
     // Placeholder conversion for MVP. Full logarithmic conversion comes with swap math.
     
@@ -116,6 +122,7 @@ pub fn sqrt_price_x64_to_tick(_sqrt_price_x64: u128) -> i32 {
     0
 }
 
+/// Converts tick index to Q64.64 sqrt price (placeholder returns Q64_64_ONE until swap math is implemented).
 pub fn tick_to_sqrt_price_x64(_tick: i32) -> u128 {
     // Placeholder conversion for MVP. Full power-series conversion comes with swap math.
     
@@ -161,7 +168,8 @@ pub fn tick_to_sqrt_price_x64(_tick: i32) -> u128 {
     crate::state::Q64_64_ONE
 }
 
-pub fn liquidity_from_amounts(
+/// Calculates liquidity amount from t
+    pub fn liquidity_from_amounts(
     amount_a: u64,
     amount_b: u64,
     tick_lower: i32,

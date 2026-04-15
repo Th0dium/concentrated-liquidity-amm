@@ -33,11 +33,11 @@ pub struct InitializeTickArray<'info> {
 }
 
 pub fn handler(ctx: Context<InitializeTickArray>, start_tick_index: i32) -> Result<()> {
-    let expected = tick_array_start_index(start_tick_index, ctx.accounts.pool_state.tick_spacing_bps)
+    let expected = tick_array_start_index(start_tick_index, ctx.accounts.pool_state.tick_spacing)
         .map_err(|_| ConcentratedLiquidityError::InvalidTickArrayStart)?;
     require!(start_tick_index == expected, ConcentratedLiquidityError::InvalidTickArrayStart);
 
-    let _ = tick_array_span(ctx.accounts.pool_state.tick_spacing_bps)
+    let _ = tick_array_span(ctx.accounts.pool_state.tick_spacing)
         .map_err(|_| ConcentratedLiquidityError::TickMathOverflow)?;
 
     let mut tick_array = ctx.accounts.tick_array.load_init()?;

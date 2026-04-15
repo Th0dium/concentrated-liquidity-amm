@@ -20,13 +20,13 @@ pub mod concentrated_liquidity {
     ///
     /// # Arguments
     /// * `fee_bps` - Trading fee in basis points (e.g., 30 = 0.30%)
-    /// * `tick_spacing_bps` - Minimum tick spacing in basis points (e.g., 100 = 1%)
+    /// * `tick_spacing` - Minimum spacing between valid ticks (e.g., 100 ticks ~= 1%)
     pub fn initialize_pool(
         ctx: Context<InitializePool>,
         fee_bps: u16,
-        tick_spacing_bps: u16,
+        tick_spacing: u16,
     ) -> Result<()> {
-        instructions::initialize_pool::handler(ctx, fee_bps, tick_spacing_bps)
+        instructions::initialize_pool::handler(ctx, fee_bps, tick_spacing)
     }
 
     /// Create a new liquidity position within a specific tick range.
