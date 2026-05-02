@@ -4,17 +4,25 @@ use anchor_spl::token::{transfer, Mint, Token, TokenAccount, Transfer};
 use crate::{
     errors::ConcentratedLiquidityError,
     math::{
-        add_fee_growth, apply_liquidity_delta, compute_swap_step, cross_tick, find_next_initialized_tick,
-        sqrt_price_x64_to_tick, tick_to_sqrt_price_x64, FeeSide,
+        add_fee_growth, apply_liquidity_delta, compute_swap_step, cross_tick,
+        find_next_initialized_tick, sqrt_price_x64_to_tick, tick_to_sqrt_price_x64, FeeSide,
     },
     state::{PoolState, TickArray},
 };
 
+/// Swaps are exact-input. The user pays `amount_in`, the program walks the pool
+/// price through active concentrated liquidity, and the final output must meet
+/// `minimum_amount_out`. Tick arrays are supplied as `remaining_accounts`
+/// because the number needed depends on how far price moves.
 #[derive(Accounts)]
 pub struct Swap<'info> {
+    /// User paying the input token and receiving the output token.
     #[account(mut)]
     pub swapper: Signer<'info>,
 
+    /// Pool whose price, active liquidity, and fee-growth state are updated.
+    ///
+    /// `has_one` constraints bind the passed mints and vaults to this pool.
     #[account(
         mut,
         has_one = token_a_mint,
@@ -27,6 +35,9 @@ pub struct Swap<'info> {
     pub token_a_mint: Account<'info, Mint>,
     pub token_b_mint: Account<'info, Mint>,
 
+    /// Swapper token A account.
+    ///
+    /// Source for A-to-B swaps and destination for B-to-A swaps.
     #[account(
         mut,
         token::mint = token_a_mint,
@@ -34,6 +45,9 @@ pub struct Swap<'info> {
     )]
     pub user_token_a: Account<'info, TokenAccount>,
 
+    /// Swapper token B account.
+    ///
+    /// Destination for A-to-B swaps and source for B-to-A swaps.
     #[account(
         mut,
         token::mint = token_b_mint,
@@ -50,6 +64,17 @@ pub struct Swap<'info> {
     pub token_program: Program<'info, Token>,
 }
 
+/// Execute an exact-input CLMM swap.
+///
+/// The loop repeatedly finds the next initialized tick in the swap direction,
+/// computes one swap step toward that boundary, records input-token fees in the
+/// global fee-growth accumulator, and either crosses the tick or stops inside
+/// the current liquidity range. Crossing a tick applies `liquidity_net`, which
+/// is how only currently in-range positions affect price movement.
+///
+/// Token movement happens after slippage validation: the full input is
+/// transferred from the swapper into the input vault, and the pool PDA signs the
+/// output transfer from the opposite vault.
 pub fn handler(
     ctx: Context<Swap>,
     amount_in: u64,

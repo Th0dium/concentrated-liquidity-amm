@@ -7,17 +7,37 @@ use anchor_spl::{
 use crate::{
     errors::ConcentratedLiquidityError,
     math::{
-        fee_growth_inside_for_ticks, initialize_tick_fee_growths, liquidity_quote, tick_array_start_index,
-        tick_offset_in_array, update_tick_liquidity, validate_position_token_amounts, validate_tick_alignment,
+        fee_growth_inside_for_ticks, initialize_tick_fee_growths, liquidity_quote,
+        tick_array_start_index, tick_offset_in_array, update_tick_liquidity,
+        validate_position_token_amounts, validate_tick_alignment,
     },
     state::{PoolState, Position, TickArray},
 };
 
+/// This instruction turns an LP's token budgets into concentrated liquidity for
+/// one pool. It validates the requested tick range, quotes the liquidity that
+/// can be created at the current pool price, transfers only the consumed token
+/// amounts into the pool vaults, creates the position PDA, mints the position
+/// ownership token, and writes the lower/upper tick boundary liquidity deltas.
+///
+/// The position PDA is protocol accounting state. The decimals-0 position mint
+/// and the owner's associated token account are the ownership layer used later
+/// by `close_position`.
 #[derive(Accounts)]
 pub struct CreatePosition<'info> {
+    /// LP wallet creating the position.
+    ///
+    /// The owner pays rent for the position PDA, position mint, and position
+    /// token account. This signer also authorizes token A/B transfers from the
+    /// owner's token accounts into the pool vaults.
     #[account(mut)]
     pub owner: Signer<'info>,
 
+    /// Pool receiving the new liquidity.
+    ///
+    /// The `has_one` constraints make the supplied mints and vaults match the
+    /// addresses stored in the pool state, preventing a client from mixing pool
+    /// state with unrelated token accounts.
     #[account(
         mut,
         has_one = token_a_mint,
@@ -30,6 +50,12 @@ pub struct CreatePosition<'info> {
     pub token_a_mint: Account<'info, Mint>,
     pub token_b_mint: Account<'info, Mint>,
 
+    /// Position PDA storing the LP's protocol accounting.
+    ///
+    /// Seeds: `[b"position", position_mint]`.
+    /// The position mint is the unique identifier, so users do not need to
+    /// coordinate position ids and ownership can be transferred via SPL token
+    /// ownership.
     #[account(
         init,
         payer = owner,
@@ -39,6 +65,11 @@ pub struct CreatePosition<'info> {
     )]
     pub position: Account<'info, Position>,
 
+    /// New NFT-like SPL mint for this position.
+    ///
+    /// The mint has `decimals = 0`; the handler mints exactly one token to the
+    /// owner's position token account. The pool PDA is mint/freeze authority so
+    /// the program controls the position-token supply.
     #[account(
         init,
         payer = owner,
@@ -48,6 +79,10 @@ pub struct CreatePosition<'info> {
     )]
     pub position_mint: Account<'info, Mint>,
 
+    /// Owner's associated token account for the new position mint.
+    ///
+    /// Holding one token from `position_mint` is what proves ownership when the
+    /// position is later closed.
     #[account(
         init,
         payer = owner,
@@ -56,6 +91,10 @@ pub struct CreatePosition<'info> {
     )]
     pub owner_position_token_account: Account<'info, TokenAccount>,
 
+    /// Owner's token A account used as a possible liquidity source.
+    ///
+    /// The account must hold token A and be owned by `owner`. Depending on the
+    /// current price relative to the range, the actual transfer can be zero.
     #[account(
         mut,
         token::mint = token_a_mint,
@@ -63,6 +102,10 @@ pub struct CreatePosition<'info> {
     )]
     pub owner_token_a: Account<'info, TokenAccount>,
 
+    /// Owner's token B account used as a possible liquidity source.
+    ///
+    /// In-range positions consume both tokens. Ranges below or above the current
+    /// price can be one-sided and consume only one of the two tokens.
     #[account(
         mut,
         token::mint = token_b_mint,
@@ -76,6 +119,11 @@ pub struct CreatePosition<'info> {
     #[account(mut)]
     pub token_b_vault: Account<'info, TokenAccount>,
 
+    /// Tick array containing `tick_lower`.
+    ///
+    /// Mutable because the lower boundary tick may be initialized and its
+    /// `liquidity_net`, `liquidity_gross`, and fee-growth-outside checkpoints
+    /// may be updated.
     #[account(
         mut,
         constraint = tick_array_lower.load()?.pool == pool_state.key()
@@ -83,6 +131,10 @@ pub struct CreatePosition<'info> {
     )]
     pub tick_array_lower: AccountLoader<'info, TickArray>,
 
+    /// Tick array containing `tick_upper`.
+    ///
+    /// Mutable for the same reason as the lower array: the upper boundary is
+    /// part of the position's range accounting and later swap crossing logic.
     #[account(
         mut,
         constraint = tick_array_upper.load()?.pool == pool_state.key()
@@ -96,6 +148,28 @@ pub struct CreatePosition<'info> {
     pub rent: Sysvar<'info, Rent>,
 }
 
+/// Create a new LP position over `[tick_lower, tick_upper)`.
+///
+/// The tick range is half-open: `tick_lower` is inclusive and `tick_upper` is
+/// exclusive. Both ticks must be aligned to the pool's raw `tick_spacing`, and
+/// both tick arrays must already be initialized.
+///
+/// `amount_a_max` and `amount_b_max` are maximum budgets from the LP, not fixed
+/// deposit amounts. The handler quotes the maximum liquidity that can be minted
+/// from those budgets at the current sqrt price, then transfers only the token
+/// amounts actually needed. This preserves normal CLMM behavior where a range
+/// fully below or above the current price is one-sided.
+///
+/// The position stores fee-growth-inside checkpoints at creation time. Later
+/// close/claim logic uses those checkpoints to calculate only the fees earned
+/// after this position was opened. The lower and upper ticks store the liquidity
+/// deltas that swaps use when crossing into or out of this range.
+///
+/// # Arguments
+/// * `tick_lower` - Inclusive lower raw tick boundary.
+/// * `tick_upper` - Exclusive upper raw tick boundary.
+/// * `amount_a_max` - Maximum token A amount the LP is willing to deposit.
+/// * `amount_b_max` - Maximum token B amount the LP is willing to deposit.
 pub fn handler(
     ctx: Context<CreatePosition>,
     tick_lower: i32,
@@ -103,14 +177,23 @@ pub fn handler(
     amount_a_max: u64,
     amount_b_max: u64,
 ) -> Result<()> {
-    require!(tick_lower < tick_upper, ConcentratedLiquidityError::InvalidTickRange);
+    require!(
+        tick_lower < tick_upper,
+        ConcentratedLiquidityError::InvalidTickRange
+    );
 
     let current_tick = ctx.accounts.pool_state.current_tick;
     let tick_spacing = ctx.accounts.pool_state.tick_spacing;
     let sqrt_price_x64 = ctx.accounts.pool_state.sqrt_price_x64;
     let fee_growth_global_a_x64 = ctx.accounts.pool_state.fee_growth_global_a_x64;
     let fee_growth_global_b_x64 = ctx.accounts.pool_state.fee_growth_global_b_x64;
-    validate_position_token_amounts(current_tick, tick_lower, tick_upper, amount_a_max, amount_b_max)?;
+    validate_position_token_amounts(
+        current_tick,
+        tick_lower,
+        tick_upper,
+        amount_a_max,
+        amount_b_max,
+    )?;
     validate_tick_alignment(tick_lower, tick_spacing)?;
     validate_tick_alignment(tick_upper, tick_spacing)?;
 
@@ -173,7 +256,7 @@ pub fn handler(
         };
 
         fee_growth_inside_for_ticks(
-            &ctx.accounts.pool_state,
+            &*ctx.accounts.pool_state,
             tick_lower,
             &lower_tick_snapshot,
             tick_upper,
