@@ -81,6 +81,7 @@ pub fn handler(
     minimum_amount_out: u64,
     a_to_b: bool,
 ) -> Result<()> {
+    // Validate swap input and load the tick arrays used for traversal.
     require!(amount_in > 0, ConcentratedLiquidityError::ZeroAmountSpecified);
 
     let tick_arrays = load_tick_arrays(&ctx.remaining_accounts)?;
@@ -98,9 +99,11 @@ pub fn handler(
     let mut amount_remaining = amount_in;
     let mut amount_out_total = 0u64;
 
+    // Walk price through initialized ticks until the input is consumed.
     while amount_remaining > 0 {
         require!(pool_state.liquidity > 0, ConcentratedLiquidityError::NoActiveLiquidity);
 
+        // Find the next initialized boundary in the swap direction.
         let next_crossing = find_next_initialized_tick(
             &tick_arrays,
             pool_state.current_tick,
@@ -110,6 +113,7 @@ pub fn handler(
         .ok_or(ConcentratedLiquidityError::MissingTickArrayForSwap)?;
 
         let target_sqrt_price_x64 = tick_to_sqrt_price_x64(next_crossing.tick_index);
+        // Compute one price movement step toward that boundary.
         let step = compute_swap_step(
             pool_state.sqrt_price_x64,
             target_sqrt_price_x64,
@@ -129,6 +133,7 @@ pub fn handler(
         pool_state.sqrt_price_x64 = step.next_sqrt_price_x64;
         add_fee_growth(pool_state, fee_side, step.fee_amount)?;
 
+        // Crossing changes active liquidity; partial steps only update current tick.
         if step.reached_target_tick {
             let tick_array_info = &ctx.remaining_accounts[next_crossing.tick_array_list_index];
             let tick_array_loader: AccountLoader<TickArray> = AccountLoader::try_from(tick_array_info)?;
@@ -149,11 +154,13 @@ pub fn handler(
         }
     }
 
+    // Enforce the user's slippage limit before moving tokens.
     require!(
         amount_out_total >= minimum_amount_out,
         ConcentratedLiquidityError::SlippageExceeded
     );
 
+    // Pull the exact input amount from the swapper.
     let transfer_in_accounts = if a_to_b {
         Transfer {
             from: ctx.accounts.user_token_a.to_account_info(),
@@ -172,6 +179,7 @@ pub fn handler(
         amount_in,
     )?;
 
+    // Prepare pool PDA signer seeds for the output vault transfer.
     let token_a_mint_key = ctx.accounts.token_a_mint.key();
     let token_b_mint_key = ctx.accounts.token_b_mint.key();
     let signer_seeds: &[&[u8]] = &[
@@ -181,6 +189,7 @@ pub fn handler(
         &[pool_state.bump],
     ];
 
+    // Send the computed output amount from the opposite vault.
     let transfer_out_accounts = if a_to_b {
         Transfer {
             from: ctx.accounts.token_b_vault.to_account_info(),

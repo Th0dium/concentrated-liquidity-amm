@@ -177,11 +177,13 @@ pub fn handler(
     amount_a_max: u64,
     amount_b_max: u64,
 ) -> Result<()> {
+    // Validate the requested range and deposit token shape.
     require!(
         tick_lower < tick_upper,
         ConcentratedLiquidityError::InvalidTickRange
     );
 
+    // Snapshot pool values needed before mutable borrows begin.
     let current_tick = ctx.accounts.pool_state.current_tick;
     let tick_spacing = ctx.accounts.pool_state.tick_spacing;
     let sqrt_price_x64 = ctx.accounts.pool_state.sqrt_price_x64;
@@ -200,6 +202,7 @@ pub fn handler(
     let lower_start = tick_array_start_index(tick_lower, tick_spacing)?;
     let upper_start = tick_array_start_index(tick_upper, tick_spacing)?;
 
+    // Confirm each supplied tick array covers the matching boundary tick.
     {
         let tick_array_lower = ctx.accounts.tick_array_lower.load()?;
         require!(
@@ -215,6 +218,7 @@ pub fn handler(
         );
     }
 
+    // Convert user token budgets into actual liquidity and consumed amounts.
     let quote = liquidity_quote(
         amount_a_max,
         amount_b_max,
@@ -225,6 +229,7 @@ pub fn handler(
     let signed_liquidity = i128::try_from(quote.liquidity_delta)
         .map_err(|_| ConcentratedLiquidityError::TickMathOverflow)?;
 
+    // Checkpoint current fee growth inside this position's range.
     let fee_growth_inside = {
         let lower_tick_snapshot = {
             let tick_array_lower = ctx.accounts.tick_array_lower.load()?;
@@ -264,6 +269,7 @@ pub fn handler(
         )
     };
 
+    // Move only the token A amount used by the liquidity quote.
     if quote.amount_a > 0 {
         let cpi_accounts_a = Transfer {
             from: ctx.accounts.owner_token_a.to_account_info(),
@@ -276,6 +282,7 @@ pub fn handler(
         )?;
     }
 
+    // Move only the token B amount used by the liquidity quote.
     if quote.amount_b > 0 {
         let cpi_accounts_b = Transfer {
             from: ctx.accounts.owner_token_b.to_account_info(),
@@ -288,6 +295,7 @@ pub fn handler(
         )?;
     }
 
+    // Mint the single position token using the pool PDA authority.
     let pool_state_key = ctx.accounts.pool_state.key();
     let token_a_mint_key = ctx.accounts.token_a_mint.key();
     let token_b_mint_key = ctx.accounts.token_b_mint.key();
@@ -311,6 +319,7 @@ pub fn handler(
         1,
     )?;
 
+    // Store the position's range, liquidity, and fee checkpoints.
     let position = &mut ctx.accounts.position;
     position.bump = ctx.bumps.position;
     position.position_mint = ctx.accounts.position_mint.key();
@@ -324,6 +333,7 @@ pub fn handler(
     position.fees_a_owed = 0;
     position.fees_b_owed = 0;
 
+    // Add liquidity at the lower boundary.
     {
         let mut tick_array_lower = ctx.accounts.tick_array_lower.load_mut()?;
         let lower_offset =
@@ -339,6 +349,7 @@ pub fn handler(
         update_tick_liquidity(lower_tick, signed_liquidity, false)?;
     }
 
+    // Add the opposite boundary delta at the upper boundary.
     {
         let mut tick_array_upper = ctx.accounts.tick_array_upper.load_mut()?;
         let upper_offset =
@@ -354,6 +365,7 @@ pub fn handler(
         update_tick_liquidity(upper_tick, signed_liquidity, true)?;
     }
 
+    // If the range is active now, increase pool active liquidity.
     if tick_lower <= current_tick && current_tick < tick_upper {
         let pool_state = &mut ctx.accounts.pool_state;
         pool_state.liquidity = pool_state

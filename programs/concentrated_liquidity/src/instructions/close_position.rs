@@ -118,6 +118,7 @@ pub struct ClosePosition<'info> {
 /// immediately. The pool PDA signs vault transfers back to the owner, then the
 /// position token is burned and the token account/PDA are closed.
 pub fn handler(ctx: Context<ClosePosition>) -> Result<()> {
+    // Snapshot pool and position values needed across account borrows.
     let current_tick = ctx.accounts.pool_state.current_tick;
     let tick_spacing = ctx.accounts.pool_state.tick_spacing;
     let sqrt_price_x64 = ctx.accounts.pool_state.sqrt_price_x64;
@@ -125,6 +126,7 @@ pub fn handler(ctx: Context<ClosePosition>) -> Result<()> {
     let position_tick_upper = ctx.accounts.position.tick_upper;
     let position_liquidity = ctx.accounts.position.liquidity_amount;
 
+    // Compute current fee growth inside the position range.
     let fee_growth_inside = {
         let lower_tick_snapshot = {
             let tick_array_lower = ctx.accounts.tick_array_lower.load()?;
@@ -154,6 +156,7 @@ pub fn handler(ctx: Context<ClosePosition>) -> Result<()> {
         )
     };
 
+    // Accrue fees and quote liquidity withdrawal amounts.
     let (amount_a_liquidity, amount_b_liquidity, fees_a_owed, fees_b_owed) = {
         let position = &mut ctx.accounts.position;
         accrue_position_fees(position, fee_growth_inside)?;
@@ -176,6 +179,7 @@ pub fn handler(ctx: Context<ClosePosition>) -> Result<()> {
         .checked_neg()
         .ok_or(ConcentratedLiquidityError::TickMathOverflow)?;
 
+    // Remove liquidity from the lower boundary.
     {
         let mut tick_array_lower = ctx.accounts.tick_array_lower.load_mut()?;
         let lower_offset = tick_offset_in_array(
@@ -187,6 +191,7 @@ pub fn handler(ctx: Context<ClosePosition>) -> Result<()> {
         update_tick_liquidity(lower_tick, signed_liquidity, false)?;
     }
 
+    // Remove the matching delta from the upper boundary.
     {
         let mut tick_array_upper = ctx.accounts.tick_array_upper.load_mut()?;
         let upper_offset = tick_offset_in_array(
@@ -198,6 +203,7 @@ pub fn handler(ctx: Context<ClosePosition>) -> Result<()> {
         update_tick_liquidity(upper_tick, signed_liquidity, true)?;
     }
 
+    // If this range is active, subtract it from pool active liquidity.
     if position_tick_lower <= current_tick && current_tick < position_tick_upper {
         let pool_state = &mut ctx.accounts.pool_state;
         pool_state.liquidity = pool_state
@@ -206,6 +212,7 @@ pub fn handler(ctx: Context<ClosePosition>) -> Result<()> {
             .ok_or(ConcentratedLiquidityError::NegativeLiquidity)?;
     }
 
+    // Combine liquidity principal and accrued fees for withdrawal.
     let amount_a_total_u128 = u128::from(amount_a_liquidity)
         .checked_add(fees_a_owed)
         .ok_or(ConcentratedLiquidityError::TickMathOverflow)?;
@@ -217,6 +224,7 @@ pub fn handler(ctx: Context<ClosePosition>) -> Result<()> {
     let amount_b_total = u64::try_from(amount_b_total_u128)
         .map_err(|_| ConcentratedLiquidityError::TickMathOverflow)?;
 
+    // Prepare pool PDA signer seeds for vault withdrawals.
     let token_a_mint_key = ctx.accounts.token_a_mint.key();
     let token_b_mint_key = ctx.accounts.token_b_mint.key();
     let signer_seeds: &[&[u8]] = &[
@@ -226,6 +234,7 @@ pub fn handler(ctx: Context<ClosePosition>) -> Result<()> {
         &[ctx.accounts.pool_state.bump],
     ];
 
+    // Transfer owed token A, if any.
     if amount_a_total > 0 {
         let transfer_a_accounts = Transfer {
             from: ctx.accounts.token_a_vault.to_account_info(),
@@ -242,6 +251,7 @@ pub fn handler(ctx: Context<ClosePosition>) -> Result<()> {
         )?;
     }
 
+    // Transfer owed token B, if any.
     if amount_b_total > 0 {
         let transfer_b_accounts = Transfer {
             from: ctx.accounts.token_b_vault.to_account_info(),
@@ -258,6 +268,7 @@ pub fn handler(ctx: Context<ClosePosition>) -> Result<()> {
         )?;
     }
 
+    // Burn the position token so it cannot be reused.
     burn(
         CpiContext::new(
             ctx.accounts.token_program.to_account_info(),
@@ -270,6 +281,7 @@ pub fn handler(ctx: Context<ClosePosition>) -> Result<()> {
         1,
     )?;
 
+    // Close the now-empty position token account.
     close_account(CpiContext::new(
         ctx.accounts.token_program.to_account_info(),
         CloseAccount {

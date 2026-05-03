@@ -54,6 +54,7 @@ pub struct InitializeTickArray<'info> {
 /// written; individual tick slots remain zeroed until positions initialize
 /// liquidity boundaries.
 pub fn handler(ctx: Context<InitializeTickArray>, start_tick_index: i32) -> Result<()> {
+    // Require the array start to be aligned to the pool's tick-array span.
     let expected = tick_array_start_index(start_tick_index, ctx.accounts.pool_state.tick_spacing)
         .map_err(|_| ConcentratedLiquidityError::InvalidTickArrayStart)?;
     require!(
@@ -61,9 +62,11 @@ pub fn handler(ctx: Context<InitializeTickArray>, start_tick_index: i32) -> Resu
         ConcentratedLiquidityError::InvalidTickArrayStart
     );
 
+    // Ensure the configured tick spacing produces a valid span.
     let _ = tick_array_span(ctx.accounts.pool_state.tick_spacing)
         .map_err(|_| ConcentratedLiquidityError::TickMathOverflow)?;
 
+    // Write array metadata; tick slots remain zeroed.
     let mut tick_array = ctx.accounts.tick_array.load_init()?;
     tick_array.pool = ctx.accounts.pool_state.key();
     tick_array.start_tick_index = start_tick_index;
