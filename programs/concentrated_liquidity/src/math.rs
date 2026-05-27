@@ -2,7 +2,10 @@ use anchor_lang::prelude::*;
 
 use crate::{
     errors::ConcentratedLiquidityError,
-    state::{FEE_GROWTH_SCALING_FACTOR, PoolState, Position, Tick, TickArray, Q64_64_ONE, TICK_ARRAY_SIZE},
+    state::{
+        PoolState, Position, Tick, TickArray, FEE_GROWTH_SCALING_FACTOR, Q64_64_ONE,
+        TICK_ARRAY_SIZE,
+    },
 };
 
 const TICK_BASE: f64 = 1.0001;
@@ -47,10 +50,13 @@ pub struct SwapStep {
 // Tick array helpers.
 
 /// Calculates the total tick range covered by one tick array (TICK_ARRAY_SIZE * tick_spacing).
-///
 /// Example: `tick_spacing = 100` => span `8_800`.
 pub fn tick_array_span(tick_spacing: u16) -> Result<i32> {
     let spacing = i32::from(tick_spacing);
+    if spacing == 0 {
+        return Err(ConcentratedLiquidityError::InvalidTickArrayStart.into());
+    }
+
     let array_span = spacing
         .checked_mul(TICK_ARRAY_SIZE as i32)
         .ok_or(ConcentratedLiquidityError::TickMathOverflow)?;
@@ -58,7 +64,6 @@ pub fn tick_array_span(tick_spacing: u16) -> Result<i32> {
 }
 
 /// Returns the start tick index of the tick array that contains the given tick.
-///
 /// Example: tick `9_000`, spacing `100` => start `8_800`.
 pub fn tick_array_start_index(tick_index: i32, tick_spacing: u16) -> Result<i32> {
     let array_span = tick_array_span(tick_spacing)?;
@@ -69,7 +74,6 @@ pub fn tick_array_start_index(tick_index: i32, tick_spacing: u16) -> Result<i32>
 }
 
 /// Finds the array index offset of a tick within its tick array.
-///
 /// Example: start `8_800`, tick `9_000`, spacing `100` => offset `2`.
 pub fn tick_offset_in_array(
     start_tick_index: i32,
@@ -94,7 +98,6 @@ pub fn tick_offset_in_array(
 }
 
 /// Validates that a tick index is aligned with the pool's tick spacing.
-///
 /// Example: spacing `100` accepts tick `9_000`, rejects tick `9_050`.
 pub fn validate_tick_alignment(tick_index: i32, tick_spacing: u16) -> Result<()> {
     let spacing = i32::from(tick_spacing);
@@ -107,7 +110,6 @@ pub fn validate_tick_alignment(tick_index: i32, tick_spacing: u16) -> Result<()>
 // Position input validation.
 
 /// Validates token deposit amounts match position range relative to current price (below/in/above range).
-///
 /// Example: at tick `0`, `[-100,100)` needs A+B, `[100,300)` needs A only.
 pub fn validate_position_token_amounts(
     current_tick: i32,
@@ -138,14 +140,12 @@ pub fn validate_position_token_amounts(
 // Price / tick conversion.
 
 /// Converts the stored Q64.64 sqrt price into a normal floating-point value.
-///
 /// Example: `Q64_64_ONE` => `1.0`.
 pub fn sqrt_price_x64_to_f64(sqrt_price_x64: u128) -> f64 {
     sqrt_price_x64 as f64 / Q64_64_ONE as f64
 }
 
 /// Converts a floating-point sqrt price into Q64.64 storage format.
-///
 /// Example: `1.0` => `Q64_64_ONE`.
 pub fn sqrt_price_f64_to_x64(sqrt_price: f64) -> Result<u128> {
     if !sqrt_price.is_finite() || sqrt_price <= 0.0 {
@@ -161,7 +161,6 @@ pub fn sqrt_price_f64_to_x64(sqrt_price: f64) -> Result<u128> {
 }
 
 /// Converts Q64.64 sqrt price to tick index.
-///
 /// Example: `Q64_64_ONE` => tick `0`.
 pub fn sqrt_price_x64_to_tick(sqrt_price_x64: u128) -> i32 {
     let sqrt_price = sqrt_price_x64_to_f64(sqrt_price_x64);
@@ -170,7 +169,6 @@ pub fn sqrt_price_x64_to_tick(sqrt_price_x64: u128) -> i32 {
 }
 
 /// Converts tick index to Q64.64 sqrt price.
-///
 /// Example: tick `0` => `Q64_64_ONE`; tick `100` => sqrt price roughly `1.005`.
 pub fn tick_to_sqrt_price_x64(tick: i32) -> u128 {
     let sqrt_price = TICK_BASE.powf(tick as f64 / 2.0);
@@ -178,18 +176,22 @@ pub fn tick_to_sqrt_price_x64(tick: i32) -> u128 {
 }
 
 /// Converts a tick directly into a floating-point sqrt price.
-///
 /// Example: tick `100` => roughly `1.005`.
 pub fn tick_to_sqrt_price_f64(tick: i32) -> f64 {
     sqrt_price_x64_to_f64(tick_to_sqrt_price_x64(tick))
 }
 
 // Liquidity quote and token amount math.
+// TODO(PRODUCTION): Replace f64 math in this section with U256 integer arithmetic to prevent precision loss.
 
 /// Calculates how much token A is needed for a liquidity amount between two sqrt prices.
-///
 /// Example: liquidity `1_000_000`, sqrt `1.0..1.01` => about `9_901` token A.
-fn amount_a_delta_unsigned(liquidity: u128, sqrt_a: f64, sqrt_b: f64, round_up: bool) -> Result<u64> {
+fn amount_a_delta_unsigned(
+    liquidity: u128,
+    sqrt_a: f64,
+    sqrt_b: f64,
+    round_up: bool,
+) -> Result<u64> {
     let lower = sqrt_a.min(sqrt_b);
     let upper = sqrt_a.max(sqrt_b);
     let delta = (liquidity as f64) * (upper - lower) / (upper * lower);
@@ -197,9 +199,13 @@ fn amount_a_delta_unsigned(liquidity: u128, sqrt_a: f64, sqrt_b: f64, round_up: 
 }
 
 /// Calculates how much token B is needed for a liquidity amount between two sqrt prices.
-///
 /// Example: liquidity `1_000_000`, sqrt `1.0..1.01` => about `10_000` token B.
-fn amount_b_delta_unsigned(liquidity: u128, sqrt_a: f64, sqrt_b: f64, round_up: bool) -> Result<u64> {
+fn amount_b_delta_unsigned(
+    liquidity: u128,
+    sqrt_a: f64,
+    sqrt_b: f64,
+    round_up: bool,
+) -> Result<u64> {
     let lower = sqrt_a.min(sqrt_b);
     let upper = sqrt_a.max(sqrt_b);
     let delta = (liquidity as f64) * (upper - lower);
@@ -207,14 +213,17 @@ fn amount_b_delta_unsigned(liquidity: u128, sqrt_a: f64, sqrt_b: f64, round_up: 
 }
 
 /// Converts a floating-point token amount into the integer token amount used by SPL tokens.
-///
 /// Example: `12.2` => `13` with `round_up`, otherwise `12`.
 fn f64_to_token_amount(value: f64, round_up: bool) -> Result<u64> {
     if !value.is_finite() || value < 0.0 {
         return Err(ConcentratedLiquidityError::MathConversionError.into());
     }
 
-    let rounded = if round_up { value.ceil() } else { value.floor() };
+    let rounded = if round_up {
+        value.ceil()
+    } else {
+        value.floor()
+    };
     if rounded > u64::MAX as f64 {
         return Err(ConcentratedLiquidityError::TickMathOverflow.into());
     }
@@ -223,7 +232,6 @@ fn f64_to_token_amount(value: f64, round_up: bool) -> Result<u64> {
 }
 
 /// Calculates liquidity from a token A budget for a range above the current price.
-///
 /// Example: above-current range uses token A budget to determine liquidity.
 fn liquidity_from_amount_a(amount_a: u64, sqrt_lower: f64, sqrt_upper: f64) -> Result<u128> {
     let numerator = (amount_a as f64) * sqrt_lower * sqrt_upper;
@@ -232,7 +240,6 @@ fn liquidity_from_amount_a(amount_a: u64, sqrt_lower: f64, sqrt_upper: f64) -> R
 }
 
 /// Calculates liquidity from a token B budget for a range below the current price.
-///
 /// Example: below-current range uses token B budget to determine liquidity.
 fn liquidity_from_amount_b(amount_b: u64, sqrt_lower: f64, sqrt_upper: f64) -> Result<u128> {
     let denominator = sqrt_upper - sqrt_lower;
@@ -240,8 +247,7 @@ fn liquidity_from_amount_b(amount_b: u64, sqrt_lower: f64, sqrt_upper: f64) -> R
 }
 
 /// Converts floating-point liquidity math into the stored integer liquidity amount.
-///
-/// Example: `42_123.9` => `42_123`.
+/// Example: `42_123.9` => `42_123`.    
 fn f64_to_liquidity(value: f64) -> Result<u128> {
     if !value.is_finite() || value <= 0.0 {
         return Err(ConcentratedLiquidityError::ZeroLiquidity.into());
@@ -253,7 +259,6 @@ fn f64_to_liquidity(value: f64) -> Result<u128> {
 }
 
 /// Quotes the liquidity minted from token A/B budgets and returns the consumed amounts.
-///
 /// Example: active range `[-100,100)` uses both budgets and returns consumed A/B.
 pub fn liquidity_quote(
     amount_a_max: u64,
@@ -291,7 +296,6 @@ pub fn liquidity_quote(
 }
 
 /// Converts a liquidity amount back into token A/B amounts at the current price.
-///
 /// Example: active range returns A+B; out-of-range returns one side.
 pub fn amounts_for_liquidity(
     liquidity: u128,
@@ -304,9 +308,15 @@ pub fn amounts_for_liquidity(
     let sqrt_current = sqrt_price_x64_to_f64(sqrt_price_x64);
 
     if sqrt_current <= sqrt_lower {
-        Ok((amount_a_delta_unsigned(liquidity, sqrt_lower, sqrt_upper, true)?, 0))
+        Ok((
+            amount_a_delta_unsigned(liquidity, sqrt_lower, sqrt_upper, true)?,
+            0,
+        ))
     } else if sqrt_current >= sqrt_upper {
-        Ok((0, amount_b_delta_unsigned(liquidity, sqrt_lower, sqrt_upper, true)?))
+        Ok((
+            0,
+            amount_b_delta_unsigned(liquidity, sqrt_lower, sqrt_upper, true)?,
+        ))
     } else {
         Ok((
             amount_a_delta_unsigned(liquidity, sqrt_current, sqrt_upper, true)?,
@@ -316,7 +326,6 @@ pub fn amounts_for_liquidity(
 }
 
 /// Returns only the liquidity number for token A/B budgets.
-///
 /// Example: same process as `liquidity_quote`, but returns only liquidity.
 pub fn liquidity_from_amounts(
     amount_a: u64,
@@ -325,13 +334,15 @@ pub fn liquidity_from_amounts(
     tick_upper: i32,
     sqrt_price_x64: u128,
 ) -> Result<u128> {
-    Ok(liquidity_quote(amount_a, amount_b, tick_lower, tick_upper, sqrt_price_x64)?.liquidity_delta)
+    Ok(
+        liquidity_quote(amount_a, amount_b, tick_lower, tick_upper, sqrt_price_x64)?
+            .liquidity_delta,
+    )
 }
 
 // Fee accounting.
 
 /// Computes fee growth inside a position's lower/upper tick range.
-///
 /// Example: global `1_000`, below `200`, above `100` => inside `700`.
 pub fn fee_growth_inside_for_ticks(
     pool: &PoolState,
@@ -381,9 +392,11 @@ pub fn fee_growth_inside_for_ticks(
 }
 
 /// Accrues fees owed to a position from the difference between current inside growth and checkpoints.
-///
 /// Example: checkpoint `500`, inside `800` => accrue growth delta `300`.
-pub fn accrue_position_fees(position: &mut Position, fee_growth_inside: FeeGrowthInside) -> Result<()> {
+pub fn accrue_position_fees(
+    position: &mut Position,
+    fee_growth_inside: FeeGrowthInside,
+) -> Result<()> {
     let growth_delta_a = fee_growth_inside
         .token_a_x64
         .wrapping_sub(position.fee_growth_checkpoint_a_x64);
@@ -417,7 +430,6 @@ pub fn accrue_position_fees(position: &mut Position, fee_growth_inside: FeeGrowt
 }
 
 /// Initializes a tick's fee-growth-outside checkpoint when a boundary first receives liquidity.
-///
 /// Example: tick `-100` at current tick `0` snapshots current global fee growth.
 pub fn initialize_tick_fee_growths(
     tick: &mut Tick,
@@ -436,7 +448,6 @@ pub fn initialize_tick_fee_growths(
 }
 
 /// Adds swap fees to the pool-wide fee-growth accumulator for the input token.
-///
 /// Example: A-to-B fee `300` increases `fee_growth_global_a_x64`.
 pub fn add_fee_growth(pool: &mut PoolState, fee_side: FeeSide, fee_amount: u64) -> Result<()> {
     if fee_amount == 0 || pool.liquidity == 0 {
@@ -469,7 +480,6 @@ pub fn add_fee_growth(pool: &mut PoolState, fee_side: FeeSide, fee_amount: u64) 
 // Tick liquidity updates.
 
 /// Updates one tick boundary's gross and net liquidity.
-///
 /// Example: lower tick adds `+L` net; upper tick adds `-L` net.
 pub fn update_tick_liquidity(
     tick: &mut Tick,
@@ -517,7 +527,6 @@ pub fn update_tick_liquidity(
 }
 
 /// Crosses an initialized tick during swap traversal.
-///
 /// Example: upward crossing returns `liquidity_net`; downward crossing flips it.
 pub fn cross_tick(pool: &PoolState, tick: &mut Tick, a_to_b: bool) -> Result<i128> {
     tick.fee_growth_outside_a_x64 = pool
@@ -537,7 +546,6 @@ pub fn cross_tick(pool: &PoolState, tick: &mut Tick, a_to_b: bool) -> Result<i12
 }
 
 /// Applies a signed liquidity delta to current active pool liquidity.
-///
 /// Example: `5_000_000 + (-1_000_000)` => `4_000_000`.
 pub fn apply_liquidity_delta(current_liquidity: u128, liquidity_delta: i128) -> Result<u128> {
     if liquidity_delta >= 0 {
@@ -554,7 +562,6 @@ pub fn apply_liquidity_delta(current_liquidity: u128, liquidity_delta: i128) -> 
 // Swap math and tick traversal.
 
 /// Computes one exact-input swap step toward a target sqrt price.
-///
 /// Example: A-to-B with `10_000` input moves price toward the next lower tick.
 pub fn compute_swap_step(
     sqrt_price_current_x64: u128,
@@ -580,8 +587,8 @@ pub fn compute_swap_step(
     let fee_denominator = 10_000u64
         .checked_sub(u64::from(fee_bps))
         .ok_or(ConcentratedLiquidityError::InvalidFeeBps)?;
-    let amount_remaining_less_fee = (u128::from(amount_remaining) * u128::from(fee_denominator) / 10_000u128)
-        as u64;
+    let amount_remaining_less_fee =
+        (u128::from(amount_remaining) * u128::from(fee_denominator) / 10_000u128) as u64;
 
     let (next_sqrt_price_x64, amount_in, amount_out, fee_amount, reached_target_tick) =
         if amount_remaining_less_fee >= amount_in_to_target {
@@ -650,7 +657,6 @@ pub fn compute_swap_step(
 }
 
 /// Finds the next initialized tick in the swap direction from supplied tick arrays.
-///
 /// Example: from tick `0`, A-to-B chooses `-100`; B-to-A chooses `300`.
 pub fn find_next_initialized_tick(
     tick_arrays: &[TickArray],
@@ -666,7 +672,8 @@ pub fn find_next_initialized_tick(
                 continue;
             }
 
-            let tick_index = tick_array.start_tick_index + (offset as i32 * i32::from(tick_spacing));
+            let tick_index =
+                tick_array.start_tick_index + (offset as i32 * i32::from(tick_spacing));
             let is_candidate = if a_to_b {
                 tick_index <= current_tick
             } else {
@@ -705,4 +712,25 @@ pub fn find_next_initialized_tick(
     }
 
     best
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tick_array_span_rejects_zero_spacing() {
+        assert!(tick_array_span(0).is_err());
+    }
+
+    #[test]
+    fn tick_array_start_index_rejects_zero_spacing() {
+        assert!(tick_array_start_index(9_000, 0).is_err());
+    }
+
+    #[test]
+    fn tick_array_helpers_keep_expected_spacing_behavior() {
+        assert_eq!(tick_array_span(100).unwrap(), 8_800);
+        assert_eq!(tick_array_start_index(9_000, 100).unwrap(), 8_800);
+    }
 }

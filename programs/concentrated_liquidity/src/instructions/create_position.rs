@@ -11,7 +11,7 @@ use crate::{
         tick_array_start_index, tick_offset_in_array, update_tick_liquidity,
         validate_position_token_amounts, validate_tick_alignment,
     },
-    state::{PoolState, Position, TickArray},
+    state::{PoolState, Position, Tick, TickArray, TICK_ARRAY_SIZE},
 };
 
 /// This instruction turns an LP's token budgets into concentrated liquidity for
@@ -338,7 +338,8 @@ pub fn handler(
         let mut tick_array_lower = ctx.accounts.tick_array_lower.load_mut()?;
         let lower_offset =
             tick_offset_in_array(tick_array_lower.start_tick_index, tick_lower, tick_spacing)?;
-        let lower_tick = &mut tick_array_lower.ticks[lower_offset];
+        let lower_ticks: &mut [Tick; TICK_ARRAY_SIZE] = &mut tick_array_lower.ticks;
+        let lower_tick: &mut Tick = &mut lower_ticks[lower_offset];
         initialize_tick_fee_growths(
             lower_tick,
             tick_lower,
@@ -354,7 +355,8 @@ pub fn handler(
         let mut tick_array_upper = ctx.accounts.tick_array_upper.load_mut()?;
         let upper_offset =
             tick_offset_in_array(tick_array_upper.start_tick_index, tick_upper, tick_spacing)?;
-        let upper_tick = &mut tick_array_upper.ticks[upper_offset];
+        let upper_ticks: &mut [Tick; TICK_ARRAY_SIZE] = &mut tick_array_upper.ticks;
+        let upper_tick: &mut Tick = &mut upper_ticks[upper_offset];
         initialize_tick_fee_growths(
             upper_tick,
             tick_upper,
