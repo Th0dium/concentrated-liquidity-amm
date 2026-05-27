@@ -147,8 +147,9 @@ pub fn handler(ctx: Context<ClosePosition>) -> Result<()> {
             tick_array_upper.ticks[upper_offset]
         };
 
+        let pool_state: &PoolState = ctx.accounts.pool_state.as_ref();
         fee_growth_inside_for_ticks(
-            &ctx.accounts.pool_state,
+            pool_state,
             position_tick_lower,
             &lower_tick_snapshot,
             position_tick_upper,

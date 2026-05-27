@@ -260,8 +260,9 @@ pub fn handler(
             tick
         };
 
+        let pool_state: &PoolState = ctx.accounts.pool_state.as_ref();
         fee_growth_inside_for_ticks(
-            &*ctx.accounts.pool_state,
+            pool_state,
             tick_lower,
             &lower_tick_snapshot,
             tick_upper,
