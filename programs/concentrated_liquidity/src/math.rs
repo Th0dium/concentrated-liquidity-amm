@@ -164,8 +164,19 @@ pub fn sqrt_price_f64_to_x64(sqrt_price: f64) -> Result<u128> {
 /// Example: `Q64_64_ONE` => tick `0`.
 pub fn sqrt_price_x64_to_tick(sqrt_price_x64: u128) -> i32 {
     let sqrt_price = sqrt_price_x64_to_f64(sqrt_price_x64);
-    let tick = ((sqrt_price.ln() * 2.0) / TICK_BASE.ln()).floor();
-    tick.clamp(i32::MIN as f64, i32::MAX as f64) as i32
+    let estimated_tick = ((sqrt_price.ln() * 2.0) / TICK_BASE.ln())
+        .floor()
+        .clamp(i32::MIN as f64, i32::MAX as f64) as i32;
+
+    let mut tick = estimated_tick;
+    while tick < i32::MAX && tick_to_sqrt_price_x64(tick.saturating_add(1)) <= sqrt_price_x64 {
+        tick = tick.saturating_add(1);
+    }
+    while tick > i32::MIN && tick_to_sqrt_price_x64(tick) > sqrt_price_x64 {
+        tick = tick.saturating_sub(1);
+    }
+
+    tick
 }
 
 /// Converts tick index to Q64.64 sqrt price.
@@ -732,5 +743,13 @@ mod tests {
     fn tick_array_helpers_keep_expected_spacing_behavior() {
         assert_eq!(tick_array_span(100).unwrap(), 8_800);
         assert_eq!(tick_array_start_index(9_000, 100).unwrap(), 8_800);
+    }
+
+    #[test]
+    fn sqrt_price_tick_round_trip_keeps_exact_tick_boundaries() {
+        for tick in [-20_000, -100, -1, 0, 1, 100, 20_000] {
+            let sqrt_price = tick_to_sqrt_price_x64(tick);
+            assert_eq!(sqrt_price_x64_to_tick(sqrt_price), tick);
+        }
     }
 }
