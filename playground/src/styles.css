@@ -103,6 +103,63 @@ h3 {
   box-shadow: 0 16px 42px rgba(31, 39, 51, 0.08);
 }
 
+.mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  color: #4d5e73;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.mode-toggle {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 132px;
+  height: 36px;
+  border: 1px solid #c8d2df;
+  border-radius: 999px;
+  padding: 3px;
+  background: #eef3f8;
+  color: #506176;
+  cursor: pointer;
+}
+
+.mode-toggle::before {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  height: calc(100% - 6px);
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 6px 16px rgba(31, 39, 51, 0.14);
+  content: "";
+  transition: transform 160ms ease;
+}
+
+.mode-toggle.on::before {
+  transform: translateX(100%);
+}
+
+.mode-toggle span {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.mode-toggle:not(.on) span:first-child,
+.mode-toggle.on span:last-child {
+  color: #151b24;
+}
+
 .field {
   display: grid;
   gap: 6px;

@@ -12,6 +12,8 @@ type InputState = {
   tickSpacing: string;
 };
 
+type PriceInputMode = "price" | "sqrt";
+
 const initialInputs: InputState = {
   currentPrice: "83",
   lowerPrice: "75",
@@ -25,19 +27,20 @@ const initialInputs: InputState = {
 
 function App() {
   const [inputs, setInputs] = useState<InputState>(initialInputs);
+  const [priceInputMode, setPriceInputMode] = useState<PriceInputMode>("price");
 
   const parsed = useMemo(
     () => ({
-      displayCurrentPrice: Number(inputs.currentPrice),
-      displayLowerPrice: Number(inputs.lowerPrice),
-      displayUpperPrice: Number(inputs.upperPrice),
+      displayCurrentPrice: priceInputToDisplayPrice(inputs.currentPrice, priceInputMode),
+      displayLowerPrice: priceInputToDisplayPrice(inputs.lowerPrice, priceInputMode),
+      displayUpperPrice: priceInputToDisplayPrice(inputs.upperPrice, priceInputMode),
       amountADisplay: Number(inputs.amountA),
       amountBDisplay: Number(inputs.amountB),
       decimalsA: Number(inputs.decimalsA),
       decimalsB: Number(inputs.decimalsB),
       tickSpacing: Number(inputs.tickSpacing),
     }),
-    [inputs],
+    [inputs, priceInputMode],
   );
 
   const validation = useMemo(() => validateInputs(parsed), [parsed]);
@@ -56,6 +59,22 @@ function App() {
     setInputs((current) => ({ ...current, [key]: value }));
   }
 
+  function togglePriceInputMode() {
+    const nextMode: PriceInputMode = priceInputMode === "price" ? "sqrt" : "price";
+    setInputs((current) => ({
+      ...current,
+      currentPrice: convertPriceInput(current.currentPrice, priceInputMode, nextMode),
+      lowerPrice: convertPriceInput(current.lowerPrice, priceInputMode, nextMode),
+      upperPrice: convertPriceInput(current.upperPrice, priceInputMode, nextMode),
+    }));
+    setPriceInputMode(nextMode);
+  }
+
+  function resetInputs() {
+    setInputs(initialInputs);
+    setPriceInputMode("price");
+  }
+
   return (
     <main className="app-shell">
       <section className="hero">
@@ -63,25 +82,37 @@ function App() {
           <p className="eyebrow">Concentrated Liquidity Math</p>
           <h1>CLMM Ratio Playground</h1>
         </div>
-        <button className="ghost-button" type="button" onClick={() => setInputs(initialInputs)}>
+        <button className="ghost-button" type="button" onClick={resetInputs}>
           Reset
         </button>
       </section>
 
       <section className="workspace">
         <form className="input-panel">
+          <div className="mode-row">
+            <span>Price input</span>
+            <button
+              className={`mode-toggle ${priceInputMode === "sqrt" ? "on" : ""}`}
+              type="button"
+              aria-pressed={priceInputMode === "sqrt"}
+              onClick={togglePriceInputMode}
+            >
+              <span>Price</span>
+              <span>Sqrt</span>
+            </button>
+          </div>
           <Field
-            label="Current price"
+            label={priceInputMode === "price" ? "Current price" : "Current sqrt price"}
             value={inputs.currentPrice}
             onChange={(value) => updateInput("currentPrice", value)}
           />
           <Field
-            label="Lower price"
+            label={priceInputMode === "price" ? "Lower price" : "Lower sqrt price"}
             value={inputs.lowerPrice}
             onChange={(value) => updateInput("lowerPrice", value)}
           />
           <Field
-            label="Upper price"
+            label={priceInputMode === "price" ? "Upper price" : "Upper sqrt price"}
             value={inputs.upperPrice}
             onChange={(value) => updateInput("upperPrice", value)}
           />
@@ -294,6 +325,33 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: absolute >= 1 ? 6 : 12,
   }).format(value);
+}
+
+function priceInputToDisplayPrice(value: string, mode: PriceInputMode) {
+  const parsed = Number(value);
+  if (mode === "sqrt" && parsed < 0) {
+    return Number.NaN;
+  }
+
+  return mode === "sqrt" ? parsed * parsed : parsed;
+}
+
+function convertPriceInput(value: string, currentMode: PriceInputMode, nextMode: PriceInputMode) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return value;
+  }
+
+  const converted = currentMode === "price" && nextMode === "sqrt" ? Math.sqrt(parsed) : parsed * parsed;
+  return formatInputNumber(converted);
+}
+
+function formatInputNumber(value: number) {
+  if (!Number.isFinite(value)) {
+    return "";
+  }
+
+  return Number(value.toPrecision(12)).toString();
 }
 
 export default App;
