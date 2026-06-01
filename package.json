@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "dev": "npm --prefix playground run dev --"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.6.2"
+  }
+}

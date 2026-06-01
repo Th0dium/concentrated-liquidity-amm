@@ -13,6 +13,12 @@ dist/
 
 # Solana / key material
 *.json
+!package.json
+!package-lock.json
+!playground/package.json
+!playground/package-lock.json
+!playground/tsconfig.json
+!playground/tsconfig.node.json
 !.vscode/*.json
 keypairs/
 
