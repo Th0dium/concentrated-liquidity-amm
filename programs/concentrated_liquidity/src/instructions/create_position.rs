@@ -196,27 +196,13 @@ pub fn handler(
         amount_a_max,
         amount_b_max,
     )?;
-    validate_tick_alignment(tick_lower, tick_spacing)?;
-    validate_tick_alignment(tick_upper, tick_spacing)?;
-
-    let lower_start = tick_array_start_index(tick_lower, tick_spacing)?;
-    let upper_start = tick_array_start_index(tick_upper, tick_spacing)?;
-
-    // Confirm each supplied tick array covers the matching boundary tick.
-    {
-        let tick_array_lower = ctx.accounts.tick_array_lower.load()?;
-        require!(
-            tick_array_lower.start_tick_index == lower_start,
-            ConcentratedLiquidityError::InvalidTickArrayStart
-        );
-    }
-    {
-        let tick_array_upper = ctx.accounts.tick_array_upper.load()?;
-        require!(
-            tick_array_upper.start_tick_index == upper_start,
-            ConcentratedLiquidityError::InvalidTickArrayStart
-        );
-    }
+    validate_position_tick_boundaries(
+        &ctx.accounts.tick_array_lower,
+        &ctx.accounts.tick_array_upper,
+        tick_lower,
+        tick_upper,
+        tick_spacing,
+    )?;
 
     // Convert user token budgets into actual liquidity and consumed amounts.
     let quote = liquidity_quote(
@@ -376,6 +362,35 @@ pub fn handler(
             .checked_add(quote.liquidity_delta)
             .ok_or(ConcentratedLiquidityError::TickMathOverflow)?;
     }
+
+    Ok(())
+}
+
+fn validate_position_tick_boundaries<'info>(
+    tick_array_lower: &AccountLoader<'info, TickArray>,
+    tick_array_upper: &AccountLoader<'info, TickArray>,
+    tick_lower: i32,
+    tick_upper: i32,
+    tick_spacing: u16,
+) -> Result<()> {
+    validate_tick_alignment(tick_lower, tick_spacing)?;
+    validate_tick_alignment(tick_upper, tick_spacing)?;
+
+    let lower_start = tick_array_start_index(tick_lower, tick_spacing)?;
+    let upper_start = tick_array_start_index(tick_upper, tick_spacing)?;
+
+    let lower_array = tick_array_lower.load()?;
+    require!(
+        lower_array.start_tick_index == lower_start,
+        ConcentratedLiquidityError::InvalidTickArrayStart
+    );
+    drop(lower_array);
+
+    let upper_array = tick_array_upper.load()?;
+    require!(
+        upper_array.start_tick_index == upper_start,
+        ConcentratedLiquidityError::InvalidTickArrayStart
+    );
 
     Ok(())
 }
