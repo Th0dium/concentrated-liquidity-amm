@@ -13,6 +13,20 @@ type InputState = {
 };
 
 type PriceInputMode = "price" | "sqrt";
+type PlaygroundTab = "ratio" | "fee-growth";
+
+type FeeLog = {
+  text: string;
+  type?: "highlight" | "flip";
+};
+
+type FeeSimState = {
+  fgg: number;
+  fgo: number[];
+  currentTick: number;
+  step: number;
+  logs: FeeLog[];
+};
 
 const initialInputs: InputState = {
   currentPrice: "83",
@@ -25,7 +39,18 @@ const initialInputs: InputState = {
   tickSpacing: "100",
 };
 
+const numFeeSimTicks = 6;
+const feeGrowthPerStep = 10;
+const initialFeeSimState: FeeSimState = {
+  fgg: 0,
+  fgo: new Array(numFeeSimTicks).fill(0),
+  currentTick: 0,
+  step: 0,
+  logs: [{ text: "Initialized: price at tick 0, FGG = 0, all FGO values = 0." }],
+};
+
 function App() {
+  const [activeTab, setActiveTab] = useState<PlaygroundTab>("ratio");
   const [inputs, setInputs] = useState<InputState>(initialInputs);
   const [priceInputMode, setPriceInputMode] = useState<PriceInputMode>("price");
 
@@ -82,76 +107,102 @@ function App() {
           <p className="eyebrow">Concentrated Liquidity Math</p>
           <h1>CLMM Ratio Playground</h1>
         </div>
-        <button className="ghost-button" type="button" onClick={resetInputs}>
+        <button
+          className="ghost-button"
+          type="button"
+          onClick={activeTab === "ratio" ? resetInputs : undefined}
+          disabled={activeTab !== "ratio"}
+        >
           Reset
         </button>
       </section>
 
-      <section className="workspace">
-        <form className="input-panel">
-          <div className="mode-row">
-            <span>Price input</span>
-            <button
-              className={`mode-toggle ${priceInputMode === "sqrt" ? "on" : ""}`}
-              type="button"
-              aria-pressed={priceInputMode === "sqrt"}
-              onClick={togglePriceInputMode}
-            >
-              <span>Price</span>
-              <span>Sqrt</span>
-            </button>
-          </div>
-          <Field
-            label={priceInputMode === "price" ? "Current price" : "Current sqrt price"}
-            value={inputs.currentPrice}
-            onChange={(value) => updateInput("currentPrice", value)}
-          />
-          <Field
-            label={priceInputMode === "price" ? "Lower price" : "Lower sqrt price"}
-            value={inputs.lowerPrice}
-            onChange={(value) => updateInput("lowerPrice", value)}
-          />
-          <Field
-            label={priceInputMode === "price" ? "Upper price" : "Upper sqrt price"}
-            value={inputs.upperPrice}
-            onChange={(value) => updateInput("upperPrice", value)}
-          />
-          <Field label="Amount A" value={inputs.amountA} onChange={(value) => updateInput("amountA", value)} />
-          <Field label="Amount B" value={inputs.amountB} onChange={(value) => updateInput("amountB", value)} />
-          <Field
-            label="Token A decimals"
-            value={inputs.decimalsA}
-            step="1"
-            onChange={(value) => updateInput("decimalsA", value)}
-          />
-          <Field
-            label="Token B decimals"
-            value={inputs.decimalsB}
-            step="1"
-            onChange={(value) => updateInput("decimalsB", value)}
-          />
-          <Field
-            label="Tick spacing"
-            value={inputs.tickSpacing}
-            step="1"
-            onChange={(value) => updateInput("tickSpacing", value)}
-          />
-        </form>
+      <nav className="tab-bar" aria-label="Playground tools">
+        <button
+          className={activeTab === "ratio" ? "active" : ""}
+          type="button"
+          onClick={() => setActiveTab("ratio")}
+        >
+          Ratio
+        </button>
+        <button
+          className={activeTab === "fee-growth" ? "active" : ""}
+          type="button"
+          onClick={() => setActiveTab("fee-growth")}
+        >
+          Fee Growth
+        </button>
+      </nav>
 
-        <section className="results-panel">
-          {!validation.ok && <div className="validation-banner">{validation.message}</div>}
-          {quotes && (
-            <>
-              <div className="quote-grid">
-                {quotes.map((quote) => (
-                  <QuoteCard key={quote.mode} quote={quote} />
-                ))}
-              </div>
-              <ComparisonTable continuous={quotes[0]} snapped={quotes[1]} />
-            </>
-          )}
+      {activeTab === "ratio" ? (
+        <section className="workspace">
+          <form className="input-panel">
+            <div className="mode-row">
+              <span>Price input</span>
+              <button
+                className={`mode-toggle ${priceInputMode === "sqrt" ? "on" : ""}`}
+                type="button"
+                aria-pressed={priceInputMode === "sqrt"}
+                onClick={togglePriceInputMode}
+              >
+                <span>Price</span>
+                <span>Sqrt</span>
+              </button>
+            </div>
+            <Field
+              label={priceInputMode === "price" ? "Current price" : "Current sqrt price"}
+              value={inputs.currentPrice}
+              onChange={(value) => updateInput("currentPrice", value)}
+            />
+            <Field
+              label={priceInputMode === "price" ? "Lower price" : "Lower sqrt price"}
+              value={inputs.lowerPrice}
+              onChange={(value) => updateInput("lowerPrice", value)}
+            />
+            <Field
+              label={priceInputMode === "price" ? "Upper price" : "Upper sqrt price"}
+              value={inputs.upperPrice}
+              onChange={(value) => updateInput("upperPrice", value)}
+            />
+            <Field label="Amount A" value={inputs.amountA} onChange={(value) => updateInput("amountA", value)} />
+            <Field label="Amount B" value={inputs.amountB} onChange={(value) => updateInput("amountB", value)} />
+            <Field
+              label="Token A decimals"
+              value={inputs.decimalsA}
+              step="1"
+              onChange={(value) => updateInput("decimalsA", value)}
+            />
+            <Field
+              label="Token B decimals"
+              value={inputs.decimalsB}
+              step="1"
+              onChange={(value) => updateInput("decimalsB", value)}
+            />
+            <Field
+              label="Tick spacing"
+              value={inputs.tickSpacing}
+              step="1"
+              onChange={(value) => updateInput("tickSpacing", value)}
+            />
+          </form>
+
+          <section className="results-panel">
+            {!validation.ok && <div className="validation-banner">{validation.message}</div>}
+            {quotes && (
+              <>
+                <div className="quote-grid">
+                  {quotes.map((quote) => (
+                    <QuoteCard key={quote.mode} quote={quote} />
+                  ))}
+                </div>
+                <ComparisonTable continuous={quotes[0]} snapped={quotes[1]} />
+              </>
+            )}
+          </section>
         </section>
-      </section>
+      ) : (
+        <FeeGrowthSimulator />
+      )}
     </main>
   );
 }
@@ -280,6 +331,149 @@ function ComparisonTable({ continuous, snapped }: { continuous: ClmmQuote; snapp
   );
 }
 
+function FeeGrowthSimulator() {
+  const [state, setState] = useState<FeeSimState>(initialFeeSimState);
+  const [lowerTick, setLowerTick] = useState("0");
+  const [upperTick, setUpperTick] = useState("3");
+  const lower = Number(lowerTick);
+  const upper = Number(upperTick);
+  const lowerOptions = Array.from({ length: numFeeSimTicks - 1 }, (_, index) => index);
+  const upperOptions = Array.from({ length: numFeeSimTicks - 1 }, (_, index) => index + 1);
+  const fgi = lower < upper ? calcFeeGrowthInside(state, lower, upper) : null;
+  const fgoBelowValue = lower < upper ? feeGrowthBelow(state, lower) : null;
+  const fgoAboveValue = lower < upper ? feeGrowthAbove(state, upper) : null;
+
+  function movePrice(direction: 1 | -1) {
+    setState((current) => {
+      const nextFgg = current.fgg + feeGrowthPerStep;
+      const nextFgo = [...current.fgo];
+      const crossedTick = direction === 1 ? current.currentTick + 1 : current.currentTick;
+      const oldFgo = nextFgo[crossedTick];
+      nextFgo[crossedTick] = nextFgg - oldFgo;
+      const nextCurrentTick = current.currentTick + direction;
+      const directionLabel = direction === 1 ? "up" : "down";
+
+      return {
+        fgg: nextFgg,
+        fgo: nextFgo,
+        currentTick: nextCurrentTick,
+        step: current.step + 1,
+        logs: [
+          ...current.logs,
+          {
+            text: `Step ${current.step + 1}: price moved ${directionLabel}; FGG -> ${nextFgg}.`,
+            type: "highlight",
+          },
+          {
+            text: `Cross tick ${crossedTick}: FGO[${crossedTick}] flips ${oldFgo} -> ${nextFgg} - ${oldFgo} = ${nextFgo[crossedTick]}.`,
+            type: "flip",
+          },
+        ],
+      };
+    });
+  }
+
+  function resetSimulator() {
+    setState(initialFeeSimState);
+    setLowerTick("0");
+    setUpperTick("3");
+  }
+
+  return (
+    <section className="fee-sim">
+      <section className="fee-toolbar">
+        <div>
+          <span>fee_growth_global</span>
+          <strong>{state.fgg}</strong>
+        </div>
+        <div className="fee-step">+{feeGrowthPerStep} fee growth per move</div>
+      </section>
+
+      <section className="fee-grid-wrap">
+        <div className="fee-tick-grid">
+          {state.fgo.map((value, tick) => (
+            <article className={`fee-tick-card ${tick === state.currentTick ? "active" : ""}`} key={tick}>
+              {tick === state.currentTick && <div className="price-marker">v</div>}
+              <span>tick</span>
+              <strong>{tick}</strong>
+              <p>
+                FGO: <b>{value}</b>
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <div className="fee-status">Price at tick {state.currentTick} - step {state.step}</div>
+
+      <section className="fee-controls">
+        <button
+          className="ghost-button"
+          type="button"
+          disabled={state.currentTick >= numFeeSimTicks - 1}
+          onClick={() => movePrice(1)}
+        >
+          Price Up
+        </button>
+        <button
+          className="ghost-button"
+          type="button"
+          disabled={state.currentTick <= 0}
+          onClick={() => movePrice(-1)}
+        >
+          Price Down
+        </button>
+        <button className="ghost-button danger" type="button" onClick={resetSimulator}>
+          Reset
+        </button>
+      </section>
+
+      <section className="fgi-panel">
+        <div className="fgi-controls">
+          <label>
+            <span>lower tick</span>
+            <select value={lowerTick} onChange={(event) => setLowerTick(event.target.value)}>
+              {lowerOptions.map((tick) => (
+                <option key={tick} value={tick}>
+                  {tick}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>upper tick</span>
+            <select value={upperTick} onChange={(event) => setUpperTick(event.target.value)}>
+              {upperOptions.map((tick) => (
+                <option key={tick} value={tick}>
+                  {tick}
+                </option>
+              ))}
+            </select>
+          </label>
+          <strong>{fgi === null ? "Invalid range" : `FGI = ${fgi}`}</strong>
+        </div>
+        {fgi !== null && (
+          <p>
+            = FGG({state.fgg}) - fgo_below[{lower}]({fgoBelowValue}) - fgo_above[{upper}](
+            {fgoAboveValue})
+          </p>
+        )}
+      </section>
+
+      <section className="fee-log-panel">
+        <h2>Event Log</h2>
+        <div className="fee-log">
+          {[...state.logs].reverse().map((log, index) => (
+            <div className={`fee-log-entry ${log.type ?? ""}`} key={`${log.text}-${index}`}>
+              {log.text}
+            </div>
+          ))}
+        </div>
+      </section>
+    </section>
+  );
+}
+
 function rangeLabel(state: ClmmQuote["rangeState"]) {
   if (state === "below") {
     return "Below range";
@@ -352,6 +546,18 @@ function formatInputNumber(value: number) {
   }
 
   return Number(value.toPrecision(12)).toString();
+}
+
+function feeGrowthBelow(state: FeeSimState, tick: number) {
+  return state.currentTick >= tick ? state.fgo[tick] : state.fgg - state.fgo[tick];
+}
+
+function feeGrowthAbove(state: FeeSimState, tick: number) {
+  return state.currentTick >= tick ? state.fgg - state.fgo[tick] : state.fgo[tick];
+}
+
+function calcFeeGrowthInside(state: FeeSimState, lower: number, upper: number) {
+  return state.fgg - feeGrowthBelow(state, lower) - feeGrowthAbove(state, upper);
 }
 
 export default App;

@@ -86,6 +86,44 @@ h3 {
   border-color: #6d87a6;
 }
 
+.ghost-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ghost-button.danger {
+  border-color: #e2a0a8;
+  color: #9b2938;
+}
+
+.tab-bar {
+  display: inline-grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+  margin: 0 0 18px;
+  border: 1px solid #c8d2df;
+  border-radius: 8px;
+  padding: 4px;
+  background: #eef3f8;
+}
+
+.tab-bar button {
+  min-width: 112px;
+  height: 36px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #506176;
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.tab-bar button.active {
+  background: #ffffff;
+  color: #151b24;
+  box-shadow: 0 6px 16px rgba(31, 39, 51, 0.12);
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
@@ -362,6 +400,188 @@ td {
   font-weight: 700;
 }
 
+.fee-sim {
+  display: grid;
+  gap: 18px;
+}
+
+.fee-toolbar,
+.fgi-panel,
+.fee-log-panel {
+  border: 1px solid #d7dee9;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 16px 42px rgba(31, 39, 51, 0.08);
+}
+
+.fee-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+}
+
+.fee-toolbar div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.fee-toolbar span,
+.fee-step,
+.fee-status,
+.fgi-panel p {
+  color: #65758a;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.fee-toolbar strong {
+  color: #151b24;
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.fee-grid-wrap {
+  padding-top: 18px;
+}
+
+.fee-tick-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.fee-tick-card {
+  position: relative;
+  display: grid;
+  gap: 5px;
+  min-height: 102px;
+  border: 1px solid #d7dee9;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+  text-align: center;
+}
+
+.fee-tick-card.active {
+  border-color: #2476c9;
+  background: #e8f2ff;
+  box-shadow: 0 12px 30px rgba(36, 118, 201, 0.14);
+}
+
+.price-marker {
+  position: absolute;
+  top: -20px;
+  left: 50%;
+  color: #c74d2d;
+  font-size: 1rem;
+  font-weight: 900;
+  transform: translateX(-50%);
+}
+
+.fee-tick-card span {
+  color: #65758a;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.fee-tick-card strong {
+  color: #151b24;
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.fee-tick-card p {
+  color: #4d5e73;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.fee-tick-card b {
+  color: #185fa5;
+}
+
+.fee-status {
+  padding: 0 2px;
+}
+
+.fee-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.fgi-panel {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+}
+
+.fgi-controls {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.fgi-controls label {
+  display: grid;
+  gap: 5px;
+  min-width: 120px;
+  color: #65758a;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.fgi-controls select {
+  height: 36px;
+  border: 1px solid #c8d2df;
+  border-radius: 8px;
+  padding: 0 10px;
+  background: #fbfcfe;
+  color: #151b24;
+}
+
+.fgi-controls strong {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  color: #185fa5;
+  font-size: 1.05rem;
+}
+
+.fee-log-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+}
+
+.fee-log {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fbfcfe;
+}
+
+.fee-log-entry {
+  color: #65758a;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.8;
+}
+
+.fee-log-entry.highlight {
+  color: #9a4525;
+}
+
+.fee-log-entry.flip {
+  color: #2f6c26;
+}
+
 @media (max-width: 980px) {
   .workspace,
   .quote-grid {
@@ -370,6 +590,14 @@ td {
 
   .input-panel {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mode-row {
+    grid-column: 1 / -1;
+  }
+
+  .fee-tick-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
@@ -387,5 +615,14 @@ td {
   .metric-list,
   .token-grid {
     grid-template-columns: 1fr;
+  }
+
+  .fee-toolbar {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .fee-tick-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
