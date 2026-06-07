@@ -97,6 +97,17 @@ pub fn tick_offset_in_array(
     Ok(offset as usize)
 }
 
+/// Retrieves a tick from a tick array by calculating its offset and accessing the array.
+/// Example: array start `8_800`, tick `9_000`, spacing `100` => returns `ticks[2]`.
+pub fn get_tick_from_array(
+    tick_array: &TickArray,
+    tick_index: i32,
+    tick_spacing: u16,
+) -> Result<Tick> {
+    let offset = tick_offset_in_array(tick_array.start_tick_index, tick_index, tick_spacing)?;
+    Ok(tick_array.ticks[offset])
+}
+
 /// Validates that a tick index is aligned with the pool's tick spacing.
 /// Example: spacing `100` accepts tick `9_000`, rejects tick `9_050`.
 pub fn validate_tick_alignment(tick_index: i32, tick_spacing: u16) -> Result<()> {

@@ -7,8 +7,8 @@ use anchor_spl::{
 use crate::{
     errors::ConcentratedLiquidityError,
     math::{
-        fee_growth_inside_for_ticks, initialize_tick_fee_growths, liquidity_quote,
-        tick_array_start_index, tick_offset_in_array, update_tick_liquidity,
+        fee_growth_inside_for_ticks, get_tick_from_array, initialize_tick_fee_growths,
+        liquidity_quote, tick_array_start_index, tick_offset_in_array, update_tick_liquidity,
         validate_position_token_amounts, validate_tick_alignment,
     },
     state::{PoolState, Position, Tick, TickArray, TICK_ARRAY_SIZE},
@@ -219,9 +219,7 @@ pub fn handler(
     let fee_growth_inside = {
         let lower_tick_snapshot = {
             let tick_array_lower = ctx.accounts.tick_array_lower.load()?;
-            let lower_offset =
-                tick_offset_in_array(tick_array_lower.start_tick_index, tick_lower, tick_spacing)?;
-            let mut tick = tick_array_lower.ticks[lower_offset];
+            let mut tick = get_tick_from_array(&tick_array_lower, tick_lower, tick_spacing)?;
             initialize_tick_fee_growths(
                 &mut tick,
                 tick_lower,
@@ -233,9 +231,7 @@ pub fn handler(
         };
         let upper_tick_snapshot = {
             let tick_array_upper = ctx.accounts.tick_array_upper.load()?;
-            let upper_offset =
-                tick_offset_in_array(tick_array_upper.start_tick_index, tick_upper, tick_spacing)?;
-            let mut tick = tick_array_upper.ticks[upper_offset];
+            let mut tick = get_tick_from_array(&tick_array_upper, tick_upper, tick_spacing)?;
             initialize_tick_fee_growths(
                 &mut tick,
                 tick_upper,
