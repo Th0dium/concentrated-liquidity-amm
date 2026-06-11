@@ -99,7 +99,9 @@ pub fn handler(
     let mut amount_remaining = amount_in;
     let mut amount_out_total = 0u64;
 
-    // Walk price through initialized ticks until the input is consumed.
+    // Walk price through initialized ticks until the exact input is consumed.
+    // Active liquidity remains constant between boundaries; only crossing an
+    // initialized tick changes which positions participate in subsequent steps.
     while amount_remaining > 0 {
         require!(pool_state.liquidity > 0, ConcentratedLiquidityError::NoActiveLiquidity);
 
@@ -141,6 +143,9 @@ pub fn handler(
             let tick = &mut tick_array.ticks[next_crossing.tick_offset];
             let liquidity_net = cross_tick(pool_state, tick, a_to_b)?;
             pool_state.liquidity = apply_liquidity_delta(pool_state.liquidity, liquidity_net)?;
+            // Ranges are [lower, upper). After crossing downward through tick t,
+            // price is on its lower side, so the active tick is t - 1. After an
+            // upward crossing, tick t itself is active.
             pool_state.current_tick = if a_to_b {
                 next_crossing
                     .tick_index
@@ -216,6 +221,9 @@ pub fn handler(
 }
 
 fn load_tick_arrays(remaining_accounts: &[AccountInfo<'_>]) -> Result<Vec<TickArray>> {
+    // Copy the zero-copy accounts for read-only searching. When a boundary is
+    // crossed, the handler re-borrows the corresponding original account
+    // mutably using the indices returned by `find_next_initialized_tick`.
     let mut tick_arrays = Vec::with_capacity(remaining_accounts.len());
     for account_info in remaining_accounts {
         let loader: AccountLoader<TickArray> = AccountLoader::try_from(account_info)?;

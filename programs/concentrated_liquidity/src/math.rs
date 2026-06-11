@@ -10,20 +10,23 @@ use crate::{
 
 const TICK_BASE: f64 = 1.0001;
 
-// Shared math result types.
-
+/// Identifies which input token paid the fees for one swap step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FeeSide {
     TokenA,
     TokenB,
 }
 
+/// Cumulative fee growth attributable to liquidity inside one tick range.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FeeGrowthInside {
+    /// Token A fees per unit of liquidity, scaled by Q64.64.
     pub token_a_x64: u128,
+    /// Token B fees per unit of liquidity, scaled by Q64.64.
     pub token_b_x64: u128,
 }
 
+/// Maximum liquidity mintable from user budgets and the token amounts it consumes.
 #[derive(Clone, Copy, Debug)]
 pub struct LiquidityQuote {
     pub liquidity_delta: u128,
@@ -31,19 +34,28 @@ pub struct LiquidityQuote {
     pub amount_b: u64,
 }
 
+/// Location of the next initialized tick selected for swap traversal.
 #[derive(Clone, Copy, Debug)]
 pub struct NextTickCrossing {
     pub tick_index: i32,
+    /// Index in the caller-supplied tick-array list.
     pub tick_array_list_index: usize,
+    /// Offset of the tick within that tick array.
     pub tick_offset: usize,
 }
 
+/// Result of consuming some exact-input amount within one active-liquidity range.
 #[derive(Clone, Copy, Debug)]
 pub struct SwapStep {
+    /// Price after this step, either at the target tick or between boundaries.
     pub next_sqrt_price_x64: u128,
+    /// Gross input consumed by the step, including fees.
     pub amount_in: u64,
+    /// Output owed to the swapper, rounded down.
     pub amount_out: u64,
+    /// Portion of `amount_in` retained as LP fees.
     pub fee_amount: u64,
+    /// Whether the price reached the target tick and must cross its liquidity boundary.
     pub reached_target_tick: bool,
 }
 
@@ -364,7 +376,16 @@ pub fn liquidity_from_amounts(
 
 // Fee accounting.
 
-/// Computes fee growth inside a position's lower/upper tick range.
+/// Computes fee growth attributable to liquidity inside a position range.
+///
+/// Global growth includes fees earned everywhere the current price has visited.
+/// Each boundary records growth on its outside side, so inside growth is:
+/// `global - growth_below_lower - growth_above_upper`. Which stored value means
+/// "below" or "above" depends on the current tick because crossing a boundary
+/// changes which side of that boundary is outside the active region.
+///
+/// Subtractions use wrapping arithmetic because fee-growth accumulators and
+/// checkpoints are interpreted modulo `2^128`, as in canonical CLMM accounting.
 /// Example: global `1_000`, below `200`, above `100` => inside `700`.
 pub fn fee_growth_inside_for_ticks(
     pool: &PoolState,
@@ -373,6 +394,9 @@ pub fn fee_growth_inside_for_ticks(
     tick_upper_index: i32,
     upper_tick: &Tick,
 ) -> FeeGrowthInside {
+    // Below the lower boundary is directly stored once price is at/above it.
+    // While price is below it, the stored outside value describes the opposite
+    // side, so subtraction from global recovers growth below.
     let below_a;
     let below_b;
     if pool.current_tick < tick_lower_index {
@@ -387,6 +411,9 @@ pub fn fee_growth_inside_for_ticks(
         below_b = lower_tick.fee_growth_outside_b_x64;
     }
 
+    // Above the upper boundary is directly stored while price is below it.
+    // Once price is at/above it, global minus the stored value recovers growth
+    // accumulated on the upper outside side.
     let above_a;
     let above_b;
     if pool.current_tick >= tick_upper_index {
@@ -451,7 +478,12 @@ pub fn accrue_position_fees(
     Ok(())
 }
 
-/// Initializes a tick's fee-growth-outside checkpoint when a boundary first receives liquidity.
+/// Initializes a tick's fee-growth-outside checkpoint when first used as a boundary.
+///
+/// If the boundary is at or below the current price, all fee growth accumulated
+/// before initialization belongs to its lower/outside side and is checkpointed.
+/// A boundary above the current price starts with zero outside growth. This
+/// prevents a newly opened position from receiving historical fees.
 /// Example: tick `-100` at current tick `0` snapshots current global fee growth.
 pub fn initialize_tick_fee_growths(
     tick: &mut Tick,
@@ -548,7 +580,12 @@ pub fn update_tick_liquidity(
     Ok(())
 }
 
-/// Crosses an initialized tick during swap traversal.
+/// Crosses an initialized tick and returns its change to active liquidity.
+///
+/// Crossing swaps which physical side is represented by `fee_growth_outside`,
+/// so the new checkpoint is `global - old_outside`. `liquidity_net` is defined
+/// for upward price movement: an upward crossing applies it directly, while an
+/// A-to-B downward crossing applies its negation.
 /// Example: upward crossing returns `liquidity_net`; downward crossing flips it.
 pub fn cross_tick(pool: &PoolState, tick: &mut Tick, a_to_b: bool) -> Result<i128> {
     tick.fee_growth_outside_a_x64 = pool
@@ -584,6 +621,15 @@ pub fn apply_liquidity_delta(current_liquidity: u128, liquidity_delta: i128) -> 
 // Swap math and tick traversal.
 
 /// Computes one exact-input swap step toward a target sqrt price.
+///
+/// There are two possible outcomes:
+/// - enough net input exists to reach the target, so input is rounded up,
+///   output is rounded down, and the caller must cross the target tick;
+/// - the remaining input is exhausted first, so the next price lies inside the
+///   current range and no liquidity boundary is crossed.
+///
+/// `amount_in` in the result is gross input including fees. Conservative
+/// rounding ensures the pool never sends more output than the math supports.
 /// Example: A-to-B with `10_000` input moves price toward the next lower tick.
 pub fn compute_swap_step(
     sqrt_price_current_x64: u128,
@@ -600,6 +646,7 @@ pub fn compute_swap_step(
     let sqrt_current = sqrt_price_x64_to_f64(sqrt_price_current_x64);
     let sqrt_target = sqrt_price_x64_to_f64(sqrt_price_target_x64);
 
+    // Net input required to move all the way to the next initialized boundary.
     let amount_in_to_target = if a_to_b {
         amount_a_delta_unsigned(liquidity, sqrt_target, sqrt_current, true)?
     } else {
@@ -609,11 +656,15 @@ pub fn compute_swap_step(
     let fee_denominator = 10_000u64
         .checked_sub(u64::from(fee_bps))
         .ok_or(ConcentratedLiquidityError::InvalidFeeBps)?;
+    // Maximum net input available after reserving the fee. Integer division
+    // rounds down, so this never overstates input available for price movement.
     let amount_remaining_less_fee =
         (u128::from(amount_remaining) * u128::from(fee_denominator) / 10_000u128) as u64;
 
     let (next_sqrt_price_x64, amount_in, amount_out, fee_amount, reached_target_tick) =
         if amount_remaining_less_fee >= amount_in_to_target {
+            // The target is reachable. Recover the gross input by dividing by
+            // the post-fee fraction and rounding up so LP fees are fully funded.
             let gross_in = if fee_denominator == 0 {
                 amount_remaining
             } else {
@@ -644,6 +695,8 @@ pub fn compute_swap_step(
                 true,
             )
         } else {
+            // Input runs out inside the current range. Consume all remaining
+            // gross input and derive a price that does not cross the target.
             let net_input = amount_remaining_less_fee;
             let next_sqrt = if a_to_b {
                 let numerator = (liquidity as f64) * sqrt_current;
@@ -678,7 +731,11 @@ pub fn compute_swap_step(
     })
 }
 
-/// Finds the next initialized tick in the swap direction from supplied tick arrays.
+/// Finds the nearest initialized tick in the swap direction.
+///
+/// A-to-B moves toward lower prices and selects the greatest candidate at or
+/// below `current_tick`. B-to-A moves upward and selects the smallest candidate
+/// strictly above it. Tick arrays need not be passed in sorted order.
 /// Example: from tick `0`, A-to-B chooses `-100`; B-to-A chooses `300`.
 pub fn find_next_initialized_tick(
     tick_arrays: &[TickArray],

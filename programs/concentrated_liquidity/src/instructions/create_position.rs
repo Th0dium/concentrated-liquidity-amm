@@ -215,7 +215,11 @@ pub fn handler(
     let signed_liquidity = i128::try_from(quote.liquidity_delta)
         .map_err(|_| ConcentratedLiquidityError::TickMathOverflow)?;
 
-    // Checkpoint current fee growth inside this position's range.
+    // Checkpoint fee growth inside the range before adding this position.
+    // Temporary tick snapshots apply first-initialization semantics without
+    // mutating the arrays yet: a boundary below the current price must treat
+    // historical global growth as outside, so the new position starts with no
+    // claim on fees earned before it existed.
     let fee_growth_inside = {
         let lower_tick_snapshot = {
             let tick_array_lower = ctx.accounts.tick_array_lower.load()?;
@@ -316,7 +320,8 @@ pub fn handler(
     position.fees_a_owed = 0;
     position.fees_b_owed = 0;
 
-    // Add liquidity at the lower boundary.
+    // The lower boundary contributes +L to upward crossings: entering the
+    // half-open range [lower, upper) activates this position's liquidity.
     {
         let mut tick_array_lower = ctx.accounts.tick_array_lower.load_mut()?;
         let lower_offset =
@@ -333,7 +338,8 @@ pub fn handler(
         update_tick_liquidity(lower_tick, signed_liquidity, false)?;
     }
 
-    // Add the opposite boundary delta at the upper boundary.
+    // The upper boundary contributes -L to upward crossings: reaching upper
+    // exits the half-open range and removes this position from active liquidity.
     {
         let mut tick_array_upper = ctx.accounts.tick_array_upper.load_mut()?;
         let upper_offset =
@@ -350,7 +356,8 @@ pub fn handler(
         update_tick_liquidity(upper_tick, signed_liquidity, true)?;
     }
 
-    // If the range is active now, increase pool active liquidity.
+    // Boundary deltas affect future crossings. If price is already inside the
+    // new range, the same liquidity must also become active immediately.
     if tick_lower <= current_tick && current_tick < tick_upper {
         let pool_state = &mut ctx.accounts.pool_state;
         pool_state.liquidity = pool_state
