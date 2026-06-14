@@ -7,11 +7,11 @@ use anchor_spl::{
 use crate::{
     errors::ConcentratedLiquidityError,
     math::{
-        fee_growth_inside_for_ticks, get_tick_from_array, initialize_tick_fee_growths,
-        liquidity_quote, tick_array_start_index, tick_offset_in_array, update_tick_liquidity,
+        fee_growth_inside_for_ticks, initialize_tick_fee_growths, liquidity_quote,
+        tick_array_start_index, tick_offset_in_array, update_tick_liquidity,
         validate_position_token_amounts, validate_tick_alignment,
     },
-    state::{PoolState, Position, Tick, TickArray, TICK_ARRAY_SIZE},
+    state::{PoolState, Position, Tick, TickArray},
 };
 
 /// This instruction turns an LP's token budgets into concentrated liquidity for
@@ -223,7 +223,12 @@ pub fn handler(
     let fee_growth_inside = {
         let lower_tick_snapshot = {
             let tick_array_lower = ctx.accounts.tick_array_lower.load()?;
-            let mut tick = get_tick_from_array(&tick_array_lower, tick_lower, tick_spacing)?;
+            let lower_offset = tick_offset_in_array(
+                tick_array_lower.start_tick_index,
+                tick_lower,
+                tick_spacing,
+            )?;
+            let mut tick = tick_array_lower.ticks[lower_offset];
             initialize_tick_fee_growths(
                 &mut tick,
                 tick_lower,
@@ -235,7 +240,12 @@ pub fn handler(
         };
         let upper_tick_snapshot = {
             let tick_array_upper = ctx.accounts.tick_array_upper.load()?;
-            let mut tick = get_tick_from_array(&tick_array_upper, tick_upper, tick_spacing)?;
+            let upper_offset = tick_offset_in_array(
+                tick_array_upper.start_tick_index,
+                tick_upper,
+                tick_spacing,
+            )?;
+            let mut tick = tick_array_upper.ticks[upper_offset];
             initialize_tick_fee_growths(
                 &mut tick,
                 tick_upper,
@@ -317,6 +327,7 @@ pub fn handler(
     position.liquidity_amount = quote.liquidity_delta;
     position.fee_growth_checkpoint_a_x64 = fee_growth_inside.token_a_x64;
     position.fee_growth_checkpoint_b_x64 = fee_growth_inside.token_b_x64;
+    // Fees owed accumulate when liquidity is modified (add/remove liquidity).
     position.fees_a_owed = 0;
     position.fees_b_owed = 0;
 
@@ -326,8 +337,7 @@ pub fn handler(
         let mut tick_array_lower = ctx.accounts.tick_array_lower.load_mut()?;
         let lower_offset =
             tick_offset_in_array(tick_array_lower.start_tick_index, tick_lower, tick_spacing)?;
-        let lower_ticks: &mut [Tick; TICK_ARRAY_SIZE] = &mut tick_array_lower.ticks;
-        let lower_tick: &mut Tick = &mut lower_ticks[lower_offset];
+        let lower_tick: &mut Tick = &mut tick_array_lower.ticks[lower_offset];
         initialize_tick_fee_growths(
             lower_tick,
             tick_lower,
@@ -344,8 +354,7 @@ pub fn handler(
         let mut tick_array_upper = ctx.accounts.tick_array_upper.load_mut()?;
         let upper_offset =
             tick_offset_in_array(tick_array_upper.start_tick_index, tick_upper, tick_spacing)?;
-        let upper_ticks: &mut [Tick; TICK_ARRAY_SIZE] = &mut tick_array_upper.ticks;
-        let upper_tick: &mut Tick = &mut upper_ticks[upper_offset];
+        let upper_tick: &mut Tick = &mut tick_array_upper.ticks[upper_offset];
         initialize_tick_fee_growths(
             upper_tick,
             tick_upper,
