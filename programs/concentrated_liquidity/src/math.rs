@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use std::ops::DerefMut;
 
 use crate::{
     errors::ConcentratedLiquidityError,
@@ -492,7 +493,12 @@ pub fn initialize_tick_fee_growths(
 
 /// Adds swap fees to the pool-wide fee-growth accumulator for the input token.
 /// Example: A-to-B fee `300` increases `fee_growth_global_a_x64`.
-pub fn add_fee_growth(pool: &mut PoolState, fee_side: FeeSide, fee_amount: u64) -> Result<()> {
+pub fn add_fee_growth<P>(pool: &mut P, fee_side: FeeSide, fee_amount: u64) -> Result<()>
+where
+    P: DerefMut<Target = PoolState>,
+{
+    let pool: &mut PoolState = pool.deref_mut();
+
     if fee_amount == 0 || pool.liquidity == 0 {
         return Ok(());
     }

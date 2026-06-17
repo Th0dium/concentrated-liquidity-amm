@@ -138,10 +138,11 @@ pub fn handler(
         // Crossing changes active liquidity; partial steps only update current tick.
         if step.reached_target_tick {
             let tick_array_info = &ctx.remaining_accounts[next_crossing.tick_array_list_index];
-            let tick_array_loader: AccountLoader<TickArray> = AccountLoader::try_from(tick_array_info)?;
+            let tick_array_loader = AccountLoader::try_from(tick_array_info)?;
             let mut tick_array = tick_array_loader.load_mut()?;
-            let tick = &mut tick_array.ticks[next_crossing.tick_offset];
-            let liquidity_net = cross_tick(pool_state, tick, a_to_b)?;
+            let mut tick = tick_array.ticks[next_crossing.tick_offset];
+            let liquidity_net = cross_tick(pool_state.as_ref(), &mut tick, a_to_b)?;
+            tick_array.ticks[next_crossing.tick_offset] = tick;
             pool_state.liquidity = apply_liquidity_delta(pool_state.liquidity, liquidity_net)?;
             // Ranges are [lower, upper). After crossing downward through tick t,
             // price is on its lower side, so the active tick is t - 1. After an
@@ -226,7 +227,7 @@ fn load_tick_arrays(remaining_accounts: &[AccountInfo<'_>]) -> Result<Vec<TickAr
     // mutably using the indices returned by `find_next_initialized_tick`.
     let mut tick_arrays = Vec::with_capacity(remaining_accounts.len());
     for account_info in remaining_accounts {
-        let loader: AccountLoader<TickArray> = AccountLoader::try_from(account_info)?;
+        let loader = AccountLoader::try_from(account_info)?;
         tick_arrays.push(*loader.load()?);
     }
     Ok(tick_arrays)
