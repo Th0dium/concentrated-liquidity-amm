@@ -82,37 +82,57 @@ pub fn handler(
     a_to_b: bool,
 ) -> Result<()> {
     // Validate swap input and load the tick arrays used for traversal.
-    require!(amount_in > 0, ConcentratedLiquidityError::ZeroAmountSpecified);
+    require!(
+        amount_in > 0,
+        ConcentratedLiquidityError::ZeroAmountSpecified
+    );
 
-    let tick_arrays = load_tick_arrays(&ctx.remaining_accounts)?;
-    require!(!tick_arrays.is_empty(), ConcentratedLiquidityError::MissingTickArrayForSwap);
+    let tick_arrays = load_tick_arrays(&ctx.remaining_accounts)?; // Copy tick arrays for read-only search
+    require!(
+        !tick_arrays.is_empty(),
+        ConcentratedLiquidityError::MissingTickArrayForSwap
+    );
 
     let pool_key = ctx.accounts.pool_state.key();
     for tick_array in &tick_arrays {
-        require!(tick_array.pool == pool_key, ConcentratedLiquidityError::InvalidTickArrayStart);
+        require!(
+            tick_array.pool == pool_key,
+            ConcentratedLiquidityError::InvalidTickArrayStart
+        ); // Prevent wrong pool's tick arrays
     }
 
     let pool_state = &mut ctx.accounts.pool_state;
-    require!(pool_state.liquidity > 0, ConcentratedLiquidityError::NoActiveLiquidity);
+    require!(
+        pool_state.liquidity > 0,
+        ConcentratedLiquidityError::NoActiveLiquidity
+    );
 
-    let fee_side = if a_to_b { FeeSide::TokenA } else { FeeSide::TokenB };
-    let mut amount_remaining = amount_in;
-    let mut amount_out_total = 0u64;
+    let fee_side = if a_to_b {
+        FeeSide::TokenA
+    } else {
+        FeeSide::TokenB
+    }; // Fee collected from input token
+    let mut amount_remaining = amount_in; // Track unconsumed input
+    let mut amount_out_total = 0u64; // Accumulate output across all steps
 
     // Walk price through initialized ticks until the exact input is consumed.
     // Active liquidity remains constant between boundaries; only crossing an
     // initialized tick changes which positions participate in subsequent steps.
     while amount_remaining > 0 {
-        require!(pool_state.liquidity > 0, ConcentratedLiquidityError::NoActiveLiquidity);
+        require!(
+            pool_state.liquidity > 0,
+            ConcentratedLiquidityError::NoActiveLiquidity
+        ); // Can become 0 mid-swap if all positions exit
 
         // Find the next initialized boundary in the swap direction.
+        // A-to-B: find greatest tick <= current (move down); B-to-A: find smallest tick > current (move up)
         let next_crossing = find_next_initialized_tick(
             &tick_arrays,
             pool_state.current_tick,
             pool_state.tick_spacing,
             a_to_b,
         )
-        .ok_or(ConcentratedLiquidityError::MissingTickArrayForSwap)?;
+        .ok_or(ConcentratedLiquidityError::MissingTickArrayForSwap)?; // None = no initialized tick found (missing arrays)
 
         let target_sqrt_price_x64 = tick_to_sqrt_price_x64(next_crossing.tick_index);
         // Compute one price movement step toward that boundary.
@@ -123,7 +143,7 @@ pub fn handler(
             amount_remaining,
             pool_state.fee_bps,
             a_to_b,
-        )?;
+        )?; // Returns whether target was reached or input exhausted mid-range
 
         amount_remaining = amount_remaining
             .checked_sub(step.amount_in)
@@ -132,31 +152,33 @@ pub fn handler(
             .checked_add(step.amount_out)
             .ok_or(ConcentratedLiquidityError::TickMathOverflow)?;
 
-        pool_state.sqrt_price_x64 = step.next_sqrt_price_x64;
-        add_fee_growth(pool_state, fee_side, step.fee_amount)?;
+        pool_state.sqrt_price_x64 = step.next_sqrt_price_x64; // Update price after this step
+        add_fee_growth(pool_state, fee_side, step.fee_amount)?; // Accrue fees to global tracker (distributed to LPs)
 
         // Crossing changes active liquidity; partial steps only update current tick.
         if step.reached_target_tick {
-            let tick_array_info = &ctx.remaining_accounts[next_crossing.tick_array_list_index];
+            // Load the original account (not the copy) for mutable access
+            let tick_array_info = &ctx.remaining_accounts[next_crossing.tick_array_list_index]; // Index from find_next_initialized_tick
             let tick_array_loader = AccountLoader::try_from(tick_array_info)?;
             let mut tick_array = tick_array_loader.load_mut()?;
-            let mut tick = tick_array.ticks[next_crossing.tick_offset];
-            let liquidity_net = cross_tick(pool_state.as_ref(), &mut tick, a_to_b)?;
-            tick_array.ticks[next_crossing.tick_offset] = tick;
-            pool_state.liquidity = apply_liquidity_delta(pool_state.liquidity, liquidity_net)?;
-            // Ranges are [lower, upper). After crossing downward through tick t,
-            // price is on its lower side, so the active tick is t - 1. After an
-            // upward crossing, tick t itself is active.
+            let mut tick = tick_array.ticks[next_crossing.tick_offset]; // Copy tick out
+            let liquidity_net = cross_tick(pool_state.as_ref(), &mut tick, a_to_b)?; // Flip fee_growth_outside, return +L or -L
+            tick_array.ticks[next_crossing.tick_offset] = tick; // Write back modified tick
+            pool_state.liquidity = apply_liquidity_delta(pool_state.liquidity, liquidity_net)?; // Update active liquidity
+                                                                                                // Ranges are [lower, upper). After crossing downward through tick t,
+                                                                                                // price is on its lower side, so the active tick is t - 1. After an
+                                                                                                // upward crossing, tick t itself is active.
             pool_state.current_tick = if a_to_b {
                 next_crossing
                     .tick_index
                     .checked_sub(1)
-                    .ok_or(ConcentratedLiquidityError::TickMathOverflow)?
+                    .ok_or(ConcentratedLiquidityError::TickMathOverflow)? // A-to-B crosses down: current = tick - 1
             } else {
-                next_crossing.tick_index
+                next_crossing.tick_index // B-to-A crosses up: current = tick
             };
         } else {
             pool_state.current_tick = sqrt_price_x64_to_tick(pool_state.sqrt_price_x64);
+            // Input exhausted mid-range: derive tick from price
         }
     }
 
@@ -164,7 +186,7 @@ pub fn handler(
     require!(
         amount_out_total >= minimum_amount_out,
         ConcentratedLiquidityError::SlippageExceeded
-    );
+    ); // Revert if output < expected (price moved unfavorably)
 
     // Pull the exact input amount from the swapper.
     let transfer_in_accounts = if a_to_b {
@@ -181,9 +203,12 @@ pub fn handler(
         }
     };
     transfer(
-        CpiContext::new(ctx.accounts.token_program.to_account_info(), transfer_in_accounts),
+        CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            transfer_in_accounts,
+        ),
         amount_in,
-    )?;
+    )?; // User authorizes transfer of input token
 
     // Prepare pool PDA signer seeds for the output vault transfer.
     let token_a_mint_key = ctx.accounts.token_a_mint.key();
@@ -193,7 +218,7 @@ pub fn handler(
         token_a_mint_key.as_ref(),
         token_b_mint_key.as_ref(),
         &[pool_state.bump],
-    ];
+    ]; // Pool PDA is vault authority
 
     // Send the computed output amount from the opposite vault.
     let transfer_out_accounts = if a_to_b {
@@ -214,7 +239,7 @@ pub fn handler(
             ctx.accounts.token_program.to_account_info(),
             transfer_out_accounts,
             &[signer_seeds],
-        ),
+        ), // Pool PDA signs via CPI with seeds
         amount_out_total,
     )?;
 
@@ -227,8 +252,8 @@ fn load_tick_arrays(remaining_accounts: &[AccountInfo<'_>]) -> Result<Vec<TickAr
     // mutably using the indices returned by `find_next_initialized_tick`.
     let mut tick_arrays = Vec::with_capacity(remaining_accounts.len());
     for account_info in remaining_accounts {
-        let loader = AccountLoader::try_from(account_info)?;
-        tick_arrays.push(*loader.load()?);
+        let loader = AccountLoader::try_from(account_info)?; // Validate account is TickArray type
+        tick_arrays.push(*loader.load()?); // Dereference and copy the entire TickArray struct
     }
-    Ok(tick_arrays)
+    Ok(tick_arrays) // Returns owned copies, not references (safe for iteration without borrowing original accounts)
 }
