@@ -115,9 +115,8 @@ pub fn handler(
     let mut amount_remaining = amount_in; // Track unconsumed input
     let mut amount_out_total = 0u64; // Accumulate output across all steps
 
-    // Walk price through initialized ticks until the exact input is consumed.
-    // Active liquidity remains constant between boundaries; only crossing an
-    // initialized tick changes which positions participate in subsequent steps.
+    // Walk price through initialized ticks until the exact input is consumed, cross one tick boundary at a time.
+    // Active liquidity remains constant between boundaries.
     while amount_remaining > 0 {
         require!(
             pool_state.liquidity > 0,
