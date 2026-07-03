@@ -700,14 +700,14 @@ pub fn compute_swap_step(
             } else {
                 sqrt_current + (net_amount_in as f64 / liquidity as f64)
             };
-            let next_sqrt_x64 = sqrt_price_f64_to_x64(next_sqrt)?;
+            let next_sqrt_price_x64 = sqrt_price_f64_to_x64(next_sqrt)?;
             let amount_out = if a_to_b {
                 calculate_token_b_for_liquidity(liquidity, next_sqrt, sqrt_current, false)?
             } else {
                 calculate_token_a_for_liquidity(liquidity, sqrt_current, next_sqrt, false)?
             };
             (
-                next_sqrt_x64,
+                next_sqrt_price_x64,
                 amount_remaining,
                 amount_out,
                 amount_remaining
