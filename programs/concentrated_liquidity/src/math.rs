@@ -649,7 +649,7 @@ pub fn compute_swap_step(
     };
 
     let post_fee_rate = 10_000u64
-        .checked_sub(u64::from(fee_bps))
+        .checked_sub(u64::from(fee_bps)) //99_990
         .ok_or(ConcentratedLiquidityError::InvalidFeeBps)?;
     // Maximum net input available after reserving the fee. Integer division
     // rounds down, so this never overstates input available for price movement.
@@ -661,13 +661,15 @@ pub fn compute_swap_step(
             // The target is reachable. Recover the gross input by dividing by
             // the post-fee fraction and rounding up so LP fees are fully funded.
             let total_input_with_fee = if post_fee_rate == 0 {
-                amount_remaining
+                amount_remaining // edge case
             } else {
                 let numerator = u128::from(amount_in_to_reach_target) * 10_000u128;
+                // Ceiling division: round up so LP fees are fully funded.
                 let gross = numerator
                     .checked_add(u128::from(post_fee_rate) - 1)
                     .ok_or(ConcentratedLiquidityError::TickMathOverflow)?
                     / u128::from(post_fee_rate);
+                // Rounding up may push gross 1 unit above amount_remaining.
                 if gross > u128::from(amount_remaining) {
                     amount_remaining
                 } else {
@@ -692,13 +694,12 @@ pub fn compute_swap_step(
         } else {
             // Input runs out inside the current range. Consume all remaining
             // gross input and derive a price that does not cross the target.
-            let net_amount_in = net_swap_amount;
             let next_sqrt = if a_to_b {
                 let numerator = (liquidity as f64) * sqrt_current;
-                let denominator = (liquidity as f64) + (net_amount_in as f64) * sqrt_current;
+                let denominator = (liquidity as f64) + (net_swap_amount as f64) * sqrt_current;
                 numerator / denominator
             } else {
-                sqrt_current + (net_amount_in as f64 / liquidity as f64)
+                sqrt_current + (net_swap_amount as f64 / liquidity as f64)
             };
             let next_sqrt_price_x64 = sqrt_price_f64_to_x64(next_sqrt)?;
             let amount_out = if a_to_b {
@@ -711,7 +712,7 @@ pub fn compute_swap_step(
                 amount_remaining,
                 amount_out,
                 amount_remaining
-                    .checked_sub(net_amount_in)
+                    .checked_sub(net_swap_amount)
                     .ok_or(ConcentratedLiquidityError::TickMathOverflow)?,
                 false,
             )
