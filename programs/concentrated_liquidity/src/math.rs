@@ -155,7 +155,7 @@ pub fn validate_position_token_amounts(
 /// Converts the stored Q64.64 sqrt price into a normal floating-point value.
 /// Example: `Q64_64_ONE` => `1.0`.
 pub fn sqrt_price_x64_to_f64(sqrt_price_x64: u128) -> f64 {
-    sqrt_price_x64 as f64 / Q64_64_ONE as f64
+    sqrt_price_x64 as f64 / Q64_64_ONE as f64 // original: sqrt = stored_x64 / 2^64
 }
 
 /// Converts a floating-point sqrt price into Q64.64 storage format.
@@ -165,7 +165,7 @@ pub fn sqrt_price_f64_to_x64(sqrt_price: f64) -> Result<u128> {
         return Err(ConcentratedLiquidityError::MathConversionError.into());
     }
 
-    let scaled = sqrt_price * Q64_64_ONE as f64;
+    let scaled = sqrt_price * Q64_64_ONE as f64; // original: stored_x64 = sqrt * 2^64
     if !scaled.is_finite() || scaled <= 0.0 || scaled > u128::MAX as f64 {
         return Err(ConcentratedLiquidityError::MathConversionError.into());
     }
@@ -177,7 +177,7 @@ pub fn sqrt_price_f64_to_x64(sqrt_price: f64) -> Result<u128> {
 /// Example: `Q64_64_ONE` => tick `0`.
 pub fn sqrt_price_x64_to_tick(sqrt_price_x64: u128) -> i32 {
     let sqrt_price = sqrt_price_x64_to_f64(sqrt_price_x64);
-    let estimated_tick = ((sqrt_price.ln() * 2.0) / TICK_BASE.ln())
+    let estimated_tick = ((sqrt_price.ln() * 2.0) / TICK_BASE.ln()) // original: tick = log(price) / log(1.0001), price = sqrt^2
         .floor()
         .clamp(i32::MIN as f64, i32::MAX as f64) as i32;
 
@@ -195,7 +195,7 @@ pub fn sqrt_price_x64_to_tick(sqrt_price_x64: u128) -> i32 {
 /// Converts tick index to Q64.64 sqrt price.
 /// Example: tick `0` => `Q64_64_ONE`; tick `100` => sqrt price roughly `1.005`.
 pub fn tick_to_sqrt_price_x64(tick: i32) -> u128 {
-    let sqrt_price = TICK_BASE.powf(tick as f64 / 2.0);
+    let sqrt_price = TICK_BASE.powf(tick as f64 / 2.0); // original: sqrt = sqrt(1.0001^tick)
     sqrt_price_f64_to_x64(sqrt_price).unwrap_or(Q64_64_ONE)
 }
 
@@ -218,7 +218,7 @@ fn calculate_token_a_for_liquidity(
 ) -> Result<u64> {
     let lower = sqrt_a.min(sqrt_b);
     let upper = sqrt_a.max(sqrt_b);
-    let delta = (liquidity as f64) * (upper - lower) / (upper * lower);
+    let delta = (liquidity as f64) * (upper - lower) / (upper * lower); // original: A = L * (1 / sqrt_l - 1 / sqrt_u)
     f64_to_token_amount(delta, round_up)
 }
 
@@ -232,7 +232,7 @@ fn calculate_token_b_for_liquidity(
 ) -> Result<u64> {
     let lower = sqrt_a.min(sqrt_b);
     let upper = sqrt_a.max(sqrt_b);
-    let delta = (liquidity as f64) * (upper - lower);
+    let delta = (liquidity as f64) * (upper - lower); // original: B = L * (sqrt_u - sqrt_l)
     f64_to_token_amount(delta, round_up)
 }
 
@@ -258,7 +258,7 @@ fn f64_to_token_amount(value: f64, round_up: bool) -> Result<u64> {
 /// Calculates liquidity from a token A budget for a range above the current price.
 /// Example: above-current range uses token A budget to determine liquidity.
 fn liquidity_from_amount_a(amount_a: u64, sqrt_lower: f64, sqrt_upper: f64) -> Result<u128> {
-    let numerator = (amount_a as f64) * sqrt_lower * sqrt_upper;
+    let numerator = (amount_a as f64) * sqrt_lower * sqrt_upper; // from: A = L * (1 / sqrt_l - 1 / sqrt_u)
     let denominator = sqrt_upper - sqrt_lower;
     f64_to_liquidity(numerator / denominator)
 }
@@ -266,7 +266,7 @@ fn liquidity_from_amount_a(amount_a: u64, sqrt_lower: f64, sqrt_upper: f64) -> R
 /// Calculates liquidity from a token B budget for a range below the current price.
 /// Example: below-current range uses token B budget to determine liquidity.
 fn liquidity_from_amount_b(amount_b: u64, sqrt_lower: f64, sqrt_upper: f64) -> Result<u128> {
-    let denominator = sqrt_upper - sqrt_lower;
+    let denominator = sqrt_upper - sqrt_lower; // from: B = L * (sqrt_u - sqrt_l)
     f64_to_liquidity((amount_b as f64) / denominator)
 }
 
@@ -296,10 +296,13 @@ pub fn liquidity_quote(
     let sqrt_current = sqrt_price_x64_to_f64(sqrt_price_x64);
 
     let liquidity_delta = if sqrt_current <= sqrt_lower {
+        // Current price is below the range: only token A is active, so quote L from amount A.
         liquidity_from_amount_a(amount_a_max, sqrt_lower, sqrt_upper)?
     } else if sqrt_current >= sqrt_upper {
+        // Current price is above the range: only token B is active, so quote L from amount B.
         liquidity_from_amount_b(amount_b_max, sqrt_lower, sqrt_upper)?
     } else {
+        // Current price is inside the range: L must fit both sides, so use min(L_from_A, L_from_B).
         let liquidity_from_a = liquidity_from_amount_a(amount_a_max, sqrt_current, sqrt_upper)?;
         let liquidity_from_b = liquidity_from_amount_b(amount_b_max, sqrt_lower, sqrt_current)?;
         liquidity_from_a.min(liquidity_from_b)
@@ -333,17 +336,21 @@ pub fn amounts_for_liquidity(
 
     if sqrt_current <= sqrt_lower {
         Ok((
+            // Below range: amount_a = L * (1 / sqrt_lower - 1 / sqrt_upper), amount_b = 0.
             calculate_token_a_for_liquidity(liquidity, sqrt_lower, sqrt_upper, true)?,
             0,
         ))
     } else if sqrt_current >= sqrt_upper {
         Ok((
             0,
+            // Above range: amount_b = L * (sqrt_upper - sqrt_lower), amount_a = 0.
             calculate_token_b_for_liquidity(liquidity, sqrt_lower, sqrt_upper, true)?,
         ))
     } else {
         Ok((
+            // In range: token A covers [sqrt_current, sqrt_upper].
             calculate_token_a_for_liquidity(liquidity, sqrt_current, sqrt_upper, true)?,
+            // In range: token B covers [sqrt_lower, sqrt_current].
             calculate_token_b_for_liquidity(liquidity, sqrt_lower, sqrt_current, true)?,
         ))
     }
@@ -444,12 +451,12 @@ pub fn accrue_position_fees(
         .wrapping_sub(position.fee_growth_checkpoint_b_x64);
 
     let additional_a = position
-        .liquidity_amount
+        .liquidity_amount // original: fees_owed += L * growth_delta / 2^64
         .checked_mul(growth_delta_a)
         .ok_or(ConcentratedLiquidityError::TickMathOverflow)?
         / FEE_GROWTH_SCALING_FACTOR;
     let additional_b = position
-        .liquidity_amount
+        .liquidity_amount // original: fees_owed += L * growth_delta / 2^64
         .checked_mul(growth_delta_b)
         .ok_or(ConcentratedLiquidityError::TickMathOverflow)?
         / FEE_GROWTH_SCALING_FACTOR;
@@ -503,7 +510,7 @@ where
         return Ok(());
     }
 
-    let growth_delta = (u128::from(fee_amount))
+    let growth_delta = (u128::from(fee_amount)) // original: fee_growth_delta = fee_amount / active_L
         .checked_mul(FEE_GROWTH_SCALING_FACTOR)
         .ok_or(ConcentratedLiquidityError::TickMathOverflow)?
         / pool.liquidity;
@@ -649,12 +656,12 @@ pub fn compute_swap_step(
     };
 
     let post_fee_rate = 10_000u64
-        .checked_sub(u64::from(fee_bps)) //99_990
+        .checked_sub(u64::from(fee_bps)) // original: post_fee_rate = 10_000 - fee_bps
         .ok_or(ConcentratedLiquidityError::InvalidFeeBps)?;
     // Maximum net input available after reserving the fee. Integer division
     // rounds down, so this never overstates input available for price movement.
     let net_swap_amount =
-        (u128::from(amount_remaining) * u128::from(post_fee_rate) / 10_000u128) as u64;
+        (u128::from(amount_remaining) * u128::from(post_fee_rate) / 10_000u128) as u64; // original: net = gross * (1 - fee_rate)
 
     let (next_sqrt_price_x64, amount_in, amount_out, fee_amount, reached_target_tick) =
         if net_swap_amount >= amount_in_to_reach_target {
@@ -663,6 +670,7 @@ pub fn compute_swap_step(
             let total_input_with_fee = if post_fee_rate == 0 {
                 amount_remaining // edge case
             } else {
+                // from: net = gross * post_fee_rate / 10_000
                 let numerator = u128::from(amount_in_to_reach_target) * 10_000u128;
                 // Ceiling division: round up so LP fees are fully funded.
                 let gross = numerator
@@ -671,12 +679,12 @@ pub fn compute_swap_step(
                     / u128::from(post_fee_rate);
                 // Rounding up may push gross 1 unit above amount_remaining.
                 if gross > u128::from(amount_remaining) {
-                    amount_remaining
+                    amount_remaining // Lost unit accounted to fee_amount.
                 } else {
                     gross as u64
                 }
             };
-            let fee_amount = total_input_with_fee
+            let fee_amount = total_input_with_fee // original: fee = gross - net_used_for_price
                 .checked_sub(amount_in_to_reach_target)
                 .ok_or(ConcentratedLiquidityError::TickMathOverflow)?;
             let amount_out = if a_to_b {
@@ -695,11 +703,11 @@ pub fn compute_swap_step(
             // Input runs out inside the current range. Consume all remaining
             // gross input and derive a price that does not cross the target.
             let next_sqrt = if a_to_b {
-                let numerator = (liquidity as f64) * sqrt_current;
+                let numerator = (liquidity as f64) * sqrt_current; // from: A = L * (1 / next_sqrt - 1 / sqrt_current)
                 let denominator = (liquidity as f64) + (net_swap_amount as f64) * sqrt_current;
                 numerator / denominator
             } else {
-                sqrt_current + (net_swap_amount as f64 / liquidity as f64)
+                sqrt_current + (net_swap_amount as f64 / liquidity as f64) // from: B = L * (next_sqrt - sqrt_current)
             };
             let next_sqrt_price_x64 = sqrt_price_f64_to_x64(next_sqrt)?;
             let amount_out = if a_to_b {
@@ -711,7 +719,7 @@ pub fn compute_swap_step(
                 next_sqrt_price_x64,
                 amount_remaining,
                 amount_out,
-                amount_remaining
+                amount_remaining // original: fee = gross - net_used_for_price
                     .checked_sub(net_swap_amount)
                     .ok_or(ConcentratedLiquidityError::TickMathOverflow)?,
                 false,
