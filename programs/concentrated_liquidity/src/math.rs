@@ -507,7 +507,7 @@ where
     let pool: &mut PoolState = pool.deref_mut();
 
     if fee_amount == 0 || pool.liquidity == 0 {
-        return Ok(());
+        return Ok(()); // Avoid deviding by zero.
     }
 
     let growth_delta = (u128::from(fee_amount)) // original: fee_growth_delta = fee_amount / active_L
