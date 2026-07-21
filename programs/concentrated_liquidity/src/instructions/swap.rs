@@ -1,7 +1,9 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Mint, Token, TokenAccount};
 
-use crate::state::PoolState;
+use crate::state::{PoolState, TickArray};
+use crate::errors::ConcentratedLiquidityError;
+use crate::math::{tick_array_start_index, tick_offset_in_array};
 
 /// Swaps are exact-input. The user pays `amount_in`, the program walks the pool
 /// price through active concentrated liquidity, and the final output must meet
@@ -64,6 +66,29 @@ pub fn handler(
     minimum_amount_out: u64,
     a_to_b: bool,
 ) -> Result<()> {
-    let _ = (ctx, amount_in, minimum_amount_out, a_to_b);
-    todo!("rebuild swap handler from premises")
+    require!(
+        amount_in > 0,
+        ConcentratedLiquidityError::ZeroAmountSpecified
+    );
+    let mut remaining_amount = amount_in;
+    let tick_spacing_raw = ctx.accounts.pool_state.tick_spacing;
+    let tick_spacing = tick_spacing_raw as i32;
+
+    while remaining_amount > 0 {
+    
+        let current_tick_index = ctx.accounts.pool_state.current_tick;
+        let next_tick_index = if a_to_b {
+            current_tick_index - tick_spacing
+        } else {
+            current_tick_index + tick_spacing
+        };
+        let array_start_index = tick_array_start_index(next_tick_index, tick_spacing)?;
+
+        for acc in ctx.remaining_accounts.iter(){
+            let loader = AccountLoader::<TickArray>::try_from(acc)?;
+        }
+        let tick_array
+        let array_offset = tick_offset_in_array(array_start_index, next_tick_index, tick_spacing)?;
+        require!(tick_array.tick[array_offset])
+    }
 }
