@@ -79,27 +79,41 @@ pub fn handler(
     }
 
     while remaining_amount > 0 {
-        let current_tick_index = ctx.accounts.pool_state.current_tick;
-        let mut tick_found = false;
-        let mut target_tick_index = current_tick_index;
+        let current_tick = ctx.accounts.pool_state.current_tick;
+        let mut best_tick: Option<(i32, usize, usize)> = none;
 
-        while !tick_found {
-            target_tick_index = if a_to_b {
-                target_tick_index - tick_spacing as i32
-            } else {
-                target_tick_index + tick_spacing as i32
-            };
-            let array_start_index = tick_array_start_index(target_tick_index, tick_spacing)?;
+        for (array_index, tick_array) in tick_arrays.iter().enumerate() {
+            for (offset, tick) in tick_array.ticks.iter().enumerate() {
+                if tick.initialized == 0 {
+                    continue;
+                }
 
-            let tick_array = tick_arrays
-                .iter()
-                .find(|arr| arr.start_tick_index == array_start_index)
-                .ok_or(ConcentratedLiquidityError::TickArrayNotFound)?;
-            let array_offset =
-                tick_offset_in_array(array_start_index, target_tick_index, tick_spacing)?;
-            let tick = &tick_array.ticks[array_offset];
-            if tick.initialized {
-                tick_found = true;
+                let tick_index =
+                    tick_array.start_tick_index + (offset as i32 * tick_spacing as i32);
+                let is_candidate = if a_to_b {
+                    tick_index <= current_tick // tick_index lower/higher = true/false
+                } else {
+                    tick_index > current_tick // tick_index lower/higher = false/true
+                }; // `<=`  because we can cross downward through the current tick itself.
+
+                if !is_candidate {
+                    continue;
+                }
+                match best_tick {
+                    None => {
+                        best_tick = Some((tick_index, array_index, offset));
+                    }
+                    // Arrays are not sorted by start_tick_index in the input,
+                    // so we must compare candidates across all arrays.
+                    // A closer tick may appear in a later array.
+                    Some((best_index, _, _)) => {
+                        let is_closer = if a_to_b {
+                            tick_index > best_index
+                        } else {
+                            tick_index < best_index
+                        };
+                    }
+                }
             }
         }
     }
