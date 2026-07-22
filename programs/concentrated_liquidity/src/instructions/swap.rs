@@ -72,23 +72,35 @@ pub fn handler(
     );
     let mut remaining_amount = amount_in;
     let tick_spacing = ctx.accounts.pool_state.tick_spacing;
-    let mut tick_arrays = Vec::with_capacity(remaining_accounts.len());
-    for acc in ctx.emaining_accounts {
+    let mut tick_arrays = Vec::with_capacity(ctx.remaining_accounts.len());
+    for acc in ctx.remaining_accounts {
         let loader = AccountLoader::<TickArray>::try_from(acc)?;
         tick_arrays.push(*loader.load()?);
     }
 
     while remaining_amount > 0 {
         let current_tick_index = ctx.accounts.pool_state.current_tick;
-        let next_tick_index = if a_to_b {
-            current_tick_index - tick_spacing as i32
-        } else {
-            current_tick_index + tick_spacing as i32
-        };
-        let array_start_index = tick_array_start_index(next_tick_index, tick_spacing)?;
+        let mut tick_found = false;
+        let mut target_tick_index = current_tick_index;
 
+        while !tick_found {
+            target_tick_index = if a_to_b {
+                target_tick_index - tick_spacing as i32
+            } else {
+                target_tick_index + tick_spacing as i32
+            };
+            let array_start_index = tick_array_start_index(target_tick_index, tick_spacing)?;
+
+            let tick_array = tick_arrays
+                .iter()
+                .find(|arr| arr.start_tick_index == array_start_index)
+                .ok_or(ConcentratedLiquidityError::TickArrayNotFound)?;
+            let array_offset =
+                tick_offset_in_array(array_start_index, target_tick_index, tick_spacing)?;
+            let tick = &tick_array.ticks[array_offset];
+            if tick.initialized {
+                tick_found = true;
+            }
         }
-        let array_offset = tick_offset_in_array(array_start_index, next_tick_index, tick_spacing)?;
-        require!(tick_array.tick[array_offset])
     }
 }
