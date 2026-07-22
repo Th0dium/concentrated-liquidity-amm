@@ -194,15 +194,15 @@ pub fn sqrt_price_x64_to_tick(sqrt_price_x64: u128) -> i32 {
 
 /// Converts tick index to Q64.64 sqrt price.
 /// Example: tick `0` => `Q64_64_ONE`; tick `100` => sqrt price roughly `1.005`.
-pub fn tick_to_sqrt_price_x64(tick: i32) -> u128 {
-    let sqrt_price = TICK_BASE.powf(tick as f64 / 2.0); // original: sqrt = sqrt(1.0001^tick)
+pub fn tick_to_sqrt_price_x64(tick_index: i32) -> u128 {
+    let sqrt_price = TICK_BASE.powf(tick_index as f64 / 2.0); // original: sqrt = sqrt(1.0001^tick)
     sqrt_price_f64_to_x64(sqrt_price).unwrap_or(Q64_64_ONE)
 }
 
 /// Converts a tick directly into a floating-point sqrt price.
 /// Example: tick `100` => roughly `1.005`.
-pub fn tick_to_sqrt_price_f64(tick: i32) -> f64 {
-    sqrt_price_x64_to_f64(tick_to_sqrt_price_x64(tick))
+pub fn tick_to_sqrt_price_f64(tick_index: i32) -> f64 {
+    sqrt_price_x64_to_f64(tick_to_sqrt_price_x64(tick_index))
 }
 
 // Liquidity quote and token amount math.
