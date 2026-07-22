@@ -80,7 +80,7 @@ pub fn handler(
 
     while remaining_amount > 0 {
         let current_tick = ctx.accounts.pool_state.current_tick;
-        let mut best_tick: Option<(i32, usize, usize)> = none;
+        let mut best_tick: Option<(i32, usize, usize)> = None;
 
         for (array_index, tick_array) in tick_arrays.iter().enumerate() {
             for (offset, tick) in tick_array.ticks.iter().enumerate() {
@@ -112,9 +112,16 @@ pub fn handler(
                         } else {
                             tick_index < best_index
                         };
+
+                        if is_closer {
+                            best_tick = Some((tick_index, array_index, offset));
+                        }
                     }
                 }
             }
         }
+        let (target_tick_index, _array_index, _offset) =
+            best_tick.ok_or(ConcentratedLiquidityError::TickArrayNotFound)?;
     }
+    Ok(())
 }
