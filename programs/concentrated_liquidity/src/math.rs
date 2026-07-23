@@ -210,7 +210,7 @@ pub fn tick_to_sqrt_price_f64(tick_index: i32) -> f64 {
 
 /// Calculates how much token A is needed for a liquidity amount between two sqrt prices.
 /// Example: liquidity `1_000_000`, sqrt `1.0..1.01` => about `9_901` token A.
-fn calculate_token_a_for_liquidity(
+pub fn calculate_token_a_for_liquidity(
     liquidity: u128,
     sqrt_a: f64,
     sqrt_b: f64,
@@ -224,7 +224,7 @@ fn calculate_token_a_for_liquidity(
 
 /// Calculates how much token B is needed for a liquidity amount between two sqrt prices.
 /// Example: liquidity `1_000_000`, sqrt `1.0..1.01` => about `10_000` token B.
-fn calculate_token_b_for_liquidity(
+pub fn calculate_token_b_for_liquidity(
     liquidity: u128,
     sqrt_a: f64,
     sqrt_b: f64,

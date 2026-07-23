@@ -2,7 +2,10 @@ use anchor_lang::prelude::*;
 use anchor_spl::token::{Mint, Token, TokenAccount};
 
 use crate::errors::ConcentratedLiquidityError;
-use crate::math::{tick_array_start_index, tick_offset_in_array};
+use crate::math::{
+    calculate_token_a_for_liquidity, calculate_token_b_for_liquidity, sqrt_price_x64_to_f64,
+    tick_to_sqrt_price_x64,
+};
 use crate::state::{PoolState, TickArray};
 
 /// Swaps are exact-input. The user pays `amount_in`, the program walks the pool
@@ -70,16 +73,18 @@ pub fn handler(
         amount_in > 0,
         ConcentratedLiquidityError::ZeroAmountSpecified
     );
+    let pool_state = &ctx.accounts.pool_state;
     let mut remaining_amount = amount_in;
-    let tick_spacing = ctx.accounts.pool_state.tick_spacing;
+    let tick_spacing = pool_state.tick_spacing;
     let mut tick_arrays = Vec::with_capacity(ctx.remaining_accounts.len());
     for acc in ctx.remaining_accounts {
         let loader = AccountLoader::<TickArray>::try_from(acc)?;
         tick_arrays.push(*loader.load()?);
     }
+    let fee_bps = pool_state.fee_bps;
 
     while remaining_amount > 0 {
-        let current_tick = ctx.accounts.pool_state.current_tick;
+        let current_tick = pool_state.current_tick;
         let mut best_tick: Option<(i32, usize, usize)> = None;
 
         for (array_index, tick_array) in tick_arrays.iter().enumerate() {
@@ -122,6 +127,43 @@ pub fn handler(
         }
         let (target_tick_index, _array_index, _offset) =
             best_tick.ok_or(ConcentratedLiquidityError::TickArrayNotFound)?;
+
+        let sqrt_current = pool_state.sqrt_price_x64;
+        let sqrt_target = tick_to_sqrt_price_x64(target_tick_index);
+
+        let sqrt_current_f64 = sqrt_price_x64_to_f64(sqrt_current);
+        let sqrt_target_f64 = sqrt_price_x64_to_f64(sqrt_target);
+
+        // calculate swap amount
+        let amount_in_to_reach_target = if a_to_b {
+            calculate_token_a_for_liquidity(
+                pool_state.liquidity,
+                sqrt_current_f64,
+                sqrt_target_f64,
+                true,
+            )?
+        } else {
+            calculate_token_b_for_liquidity(
+                pool_state.liquidity,
+                sqrt_current_f64,
+                sqrt_target_f64,
+                true,
+            )?
+        };
+        let post_fee_rate = 10_000u64 - fee_bps as u64; // 9970 = 10000 - 30 <=> 100% - 0.3%
+        let net_available = remaining_amount as u128 * post_fee_rate as u128 / 10_000u128;
+        let (step_amount_in, swap_amount, step_fee) =
+            if net_available >= amount_in_to_reach_target as u128 {
+                let total = amount_in_to_reach_target as u128 * 10_000u128 / post_fee_rate as u128;
+                let swap = amount_in_to_reach_target as u128;
+                let fee = total - swap;
+                (total, swap, fee)
+            } else {
+                let total = remaining_amount as u128;
+                let swap = total * post_fee_rate as u128 / 10_000u128;
+                let fee = total - swap;
+                (total, swap, fee)
+            };
     }
     Ok(())
 }
