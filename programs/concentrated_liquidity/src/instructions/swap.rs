@@ -3,8 +3,8 @@ use anchor_spl::token::{Mint, Token, TokenAccount};
 
 use crate::errors::ConcentratedLiquidityError;
 use crate::math::{
-    calculate_token_a_for_liquidity, calculate_token_b_for_liquidity, sqrt_price_x64_to_f64,
-    tick_to_sqrt_price_x64,
+    calculate_token_a_for_liquidity, calculate_token_b_for_liquidity, sqrt_price_f64_to_x64,
+    sqrt_price_x64_to_f64, tick_to_sqrt_price_x64,
 };
 use crate::state::{PoolState, TickArray};
 
@@ -73,7 +73,8 @@ pub fn handler(
         amount_in > 0,
         ConcentratedLiquidityError::ZeroAmountSpecified
     );
-    let pool_state = &ctx.accounts.pool_state;
+    let mut amount_out_total = 0u64;
+    let pool_state = &mut ctx.accounts.pool_state;
     let mut remaining_amount = amount_in;
     let tick_spacing = pool_state.tick_spacing;
     let mut tick_arrays = Vec::with_capacity(ctx.remaining_accounts.len());
@@ -125,6 +126,7 @@ pub fn handler(
                 }
             }
         }
+
         let (target_tick_index, _array_index, _offset) =
             best_tick.ok_or(ConcentratedLiquidityError::TickArrayNotFound)?;
 
@@ -152,18 +154,59 @@ pub fn handler(
         };
         let post_fee_rate = 10_000u64 - fee_bps as u64; // 9970 = 10000 - 30 <=> 100% - 0.3%
         let net_available = remaining_amount as u128 * post_fee_rate as u128 / 10_000u128;
-        let (step_amount_in, swap_amount, step_fee) =
-            if net_available >= amount_in_to_reach_target as u128 {
-                let total = amount_in_to_reach_target as u128 * 10_000u128 / post_fee_rate as u128;
-                let swap = amount_in_to_reach_target as u128;
-                let fee = total - swap;
-                (total, swap, fee)
+        let (step_amount_in, swap_amount, step_fee, new_target) = if net_available
+            >= amount_in_to_reach_target as u128
+        {
+            let total = amount_in_to_reach_target as u128 * 10_000u128 / post_fee_rate as u128;
+            let swap = amount_in_to_reach_target as u128;
+            let fee = total - swap;
+            (total, swap, fee, None)
+        } else {
+            let total = remaining_amount as u128;
+            let swap = net_available;
+            let fee = total - swap;
+            // Calculate new target sqrt price f64
+            let next_sqrt = if a_to_b {
+                let numerator = (pool_state.liquidity as f64) * sqrt_current_f64;
+                let denominator = (pool_state.liquidity as f64) + (swap as f64) * sqrt_current_f64;
+                numerator / denominator
             } else {
-                let total = remaining_amount as u128;
-                let swap = total * post_fee_rate as u128 / 10_000u128;
-                let fee = total - swap;
-                (total, swap, fee)
+                sqrt_current_f64 + (swap as f64 / pool_state.liquidity as f64) // from: B = L * (next_sqrt - sqrt_current)
             };
+            let next_sqrt_x64 = sqrt_price_f64_to_x64(next_sqrt)?;
+            (total, swap, fee, Some(next_sqrt_x64))
+        };
+        let next_sqrt_f64 = match new_target {
+            None => sqrt_target_f64,
+            Some(next_x64) => sqrt_price_x64_to_f64(next_x64),
+        };
+
+        let amount_out = if a_to_b {
+            calculate_token_b_for_liquidity(
+                pool_state.liquidity,
+                sqrt_current_f64,
+                next_sqrt_f64,
+                false,
+            )?
+        } else {
+            calculate_token_a_for_liquidity(
+                pool_state.liquidity,
+                sqrt_current_f64,
+                next_sqrt_f64,
+                false,
+            )?
+        };
+        remaining_amount = remaining_amount
+            .checked_sub(step_amount_in as u64)
+            .ok_or(ConcentratedLiquidityError::TickMathOverflow)?;
+        amount_out_total = amount_out_total
+            .checked_add(amount_out)
+            .ok_or(ConcentratedLiquidityError::TickMathOverflow)?;
+
+        pool_state.sqrt_price_x64 = match new_target {
+            None => sqrt_target,
+            Some(next_x64) => (next_x64),
+        };
     }
     Ok(())
 }
